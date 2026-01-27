@@ -1,0 +1,283 @@
+/* === Общие стили === */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f4f4f9;
+    color: #333;
+    margin: 0;
+    padding: 20px;
+    line-height: 1.5;
+}
+
+h1 {
+    color: #007bff;
+    border-bottom: 2px solid #ddd;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    text-align: center;
+    font-size: 1.5em;
+}
+
+h2 {
+    color: #555;
+    margin-top: 25px;
+    border-left: 5px solid #007bff;
+    padding-left: 10px;
+}
+
+h3 {
+    color: #333;
+    border-bottom: 1px dashed #ccc;
+    padding-bottom: 5px;
+    margin-top: 0;
+}
+
+h4 {
+    margin-bottom: 10px;
+    color: #666;
+}
+
+/* === Контейнеры и карточки === */
+.card-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.card {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    flex: 1 1 300px;
+}
+
+.relay-card {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    margin-bottom: 20px;
+    border-left: 5px solid #ccc;
+}
+
+/* Особенный стиль для насоса */
+.main-pump {
+    border-left: 5px solid #ffc107;
+}
+
+p strong {
+    font-weight: bold;
+    color: #007bff;
+}
+
+/* === Кнопки управления === */
+.button {
+    display: inline-block;
+    padding: 12px 20px;
+    margin: 5px 0;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: bold;
+    transition: background-color 0.3s, transform 0.1s;
+    text-align: center;
+    min-width: 120px;
+    cursor: pointer;
+    border: none;
+}
+
+.button:active {
+    transform: scale(0.98);
+}
+
+/* Зеленая кнопка (Включить) */
+.on {
+    background-color: #28a745;
+    color: white;
+}
+
+.on:hover {
+    background-color: #218838;
+}
+
+/* Красная кнопка (Выключить) */
+.off {
+    background-color: #dc3545;
+    color: white;
+}
+
+.off:hover {
+    background-color: #c82333;
+}
+
+/* === Таблицы расписаний === */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    text-align: left;
+}
+
+th {
+    background-color: #f2f2f2;
+    color: #333;
+}
+
+tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+code {
+    background: #eee;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+/* === Формы (Настройки и Добавление) === */
+.form-container {
+    max-width: 450px;
+    margin: 20px auto;
+    padding: 25px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.form-group {
+    margin-bottom: 20px;
+    padding: 10px;
+    border: 1px solid #eee;
+    border-radius: 4px;
+}
+
+.form-group strong {
+    display: block;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.form-container input[type="text"],
+.form-container input[type="number"] {
+    width: 100%;
+    padding: 12px;
+    margin-top: 5px;
+    box-sizing: border-box;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+}
+
+.form-container input[type="submit"] {
+    width: 100%;
+    padding: 15px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 1.1em;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+.form-container input[type="submit"]:hover {
+    background-color: #0056b3;
+}
+
+.form-group label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.form-group input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
+}
+
+/* === Логи (с защитой от переполнения) === */
+.log-container {
+    max-width: 100%;
+    margin: 10px auto;
+    padding: 10px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.log-pre {
+    background: #1e1e1e;
+    color: #00ff00;
+    padding: 15px;
+    border-radius: 5px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    text-align: left;
+
+    /* Исправление переполнения */
+    white-space: pre-wrap;       /* Перенос строк */
+    word-wrap: break-word;       /* Разрыв длинных слов */
+    overflow-wrap: break-word;
+
+    max-height: 65vh;            /* Ограничение по высоте */
+    overflow-y: auto;            /* Вертикальная прокрутка */
+}
+
+/* === Адаптивность для мобильных === */
+@media (max-width: 600px) {
+    body {
+        padding: 10px;
+    }
+
+    .card-container {
+        flex-direction: column;
+    }
+
+    .card {
+        flex: 1 1 100%;
+    }
+
+    .button {
+        width: 100%; /* Кнопки на весь экран на мобилках */
+        box-sizing: border-box;
+    }
+
+    table {
+        font-size: 0.8em;
+    }
+
+    th, td {
+        padding: 6px;
+    }
+}
+
+footer {
+    text-align: center;
+    margin-top: 30px;
+    color: #888;
+    font-size: 0.8em;
+}
+
+.status-ok {
+    color: #28a745; /* Зеленый */
+    font-weight: bold;
+}
+
+.status-alarm {
+    color: #dc3545; /* Красный */
+    font-weight: bold;
+    animation: blink 1s infinite; /* Опционально: мигание при тревоге */
+}
+
+@keyframes blink {
+    50% { opacity: 0.5; }
+}

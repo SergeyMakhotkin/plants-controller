@@ -1,0 +1,29 @@
+# PlatformIO local files and cache
+.pio
+.pioenvs
+.piolibdeps
+
+# IDE
+.idea
+debug*
+.vscode
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# tmp files
+*.o
+*.obj
+*.a
+*.lib
+*.bin
+*.elf
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Sencetive data
+secrets.ini
