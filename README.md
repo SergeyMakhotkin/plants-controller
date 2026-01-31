@@ -1,73 +1,58 @@
-## Plants Controller 
+# 🌿 Plants Controller
 
-An automated system for managing plant lighting and irrigation based on NodeMCU (ESP8266). 
+An intelligent irrigation and lighting control system based on NodeMCU (ESP8266).
 
-##  Key Features 
+## 🚀 Key Features
+- **3-Channel Control**: 2 channels for lighting, 1 for the pump (with protection).
+- **Advanced Scheduling**: Support for Cron-masks with second-level precision.
+- **Smart Manual Mode**: Manual control that works harmoniously with automation.
+- **Safety Engine**: Automatic shutdown when the work time limit is exceeded.
+- **Sensors**: Water leak monitoring (D8) and climate tracking (BMP280).
 
--  **3-Channel Control**: 2 channels for lighting, 1 for the pump. 
--  **Intelligent Scheduling**: Support for Cron-like masks with second-level precision and duration-based timers. 
--  **Safety Engine**: Hard-coded pump runtime limit to prevent over-watering or flooding. 
--  **Sensor Support**: Integration with BMP280 (Temperature/Pressure) and Digital Water Leak Sensor. 
--  **Web Interface**: Full control via local network with authentication support. 
+---
 
-##  Hardware Pinout 
+## 🕹️ Operational Logic
 
-| Component     | NodeMCU Pin | Function                   |
-|---------------|-------------|----------------------------|
-| Relay 1       | D5          | Light 1                    |
-| Relay 2       | D6          | Light 2                    |
-| Relay 3       | D7          | Pump                       |
-| I2C SDA       | D2          | BMP280 Data                |
-| I2C SCL       | D1          | BMP280 Clock               |
-| Leak Sensor   | D8          | Digital Input (Active LOW) |
+The system operates in two modes: **Auto** (scheduled) and **Manual** (user-driven).
 
-##  Installation & Deployment (PlatformIO) 
+### 1. Manual Control (Web UI)
+- **Turn On/Off**: When a button is pressed in the UI, the relay enters **Manual** mode. In this state, the automated schedule is ignored.
+- **Return to Auto**: If you press "Turn On" while the relay is already manually "ON", it will **return to Auto mode**. It won't turn off, but it will now wait for the next command from the schedule.
 
-###  1. Configuration (Secrets) 
- For security reasons, sensitive information (WiFi credentials, IP settings, etc.) is stored in a separate file. 
+### 2. Automatic Reset
+- **Slot Start**: When a scheduled "ON" time arrives, the relay **always** resets from Manual to **Auto** mode. This ensures that if you forget to turn off the lights manually, the system regains control.
 
-1.  Locate the `secrets.ini.tmpl` file in the project root. 
-2.  Create a copy of it named `secrets.ini`. 
-3.  Edit `secrets.ini` and replace the placeholder values with your actual network and authorization settings. 
+### 3. Safety Timeout
+- For relays with the `isLimited` flag (e.g., the Pump), the `relayMaxWorkTimeSec` timer is active.
+- If the relay runs longer than the defined limit, it is **forcibly turned off**, and the Manual mode is reset. This protects against flooding in case of a sensor failure or scheduling error.
 
->  **Note:** The `secrets.ini` file is ignored by Git to keep your credentials private. 
+---
 
-###  2. Uploading Data & Firmware 
- To upload the web interface files (HTML/CSS/Config) to the LittleFS partition: 
+## 🛠️ Installation & Deployment
+
+### 1. Secret Configuration
+Create a `secrets.ini` file in the project root based on `secrets.ini.tmpl` and specify your WiFi and authentication credentials.
+
+### 2. Uploading Data
+To make the web interface functional, you must upload the files from the `data` folder to LittleFS:
 ```bash
 pio run --target uploadfs
 ```
-To upload the main firmware:
-```bash
 
-pio run --target upload
-```
-Terminal Logs & Debugging
+---
 
-Use the Serial Monitor at 115200 baud to monitor system status:
+## 🔌 Hardware Pinout
 
-    WiFi Connected. IP: 192.168.1.10: Successfully joined the network.
+| Component      | NodeMCU Pin | Function                   |
+|----------------|-------------|----------------------------|
+| Relay 1        | D1          | Light 1                    |
+| Relay 2        | D2          | Light 2                    |
+| Relay 3        | D5          | Pump (`isLimited: true`)   |
+| Leak Sensor    | D8          | Digital Input (Active LOW) |
+| I2C (SDA/SCL)  | D2 / D1     | BMP280 Sensor              |
 
-    [HH:MM:SS] Light 1 ON (Auto): Automated schedule trigger.
+---
 
-    [HH:MM:SS] Pump STARTED: Pump activated via schedule or web UI.
-
-    SAFETY: Pump Timeout!: Critical alert. The pump was shut down for exceeding the safety limit.
-
-    ALARM: Leak detected!: Water detected by the leak sensor on D8. 
-
-Operational Logic
-
-Manual vs. Auto Mode
-
-    Auto Mode: Relays follow the schedules defined in the web interface.
-
-    Manual Mode: Triggered via the Web UI.
-
-        Lights: Automation is ignored until the next manual toggle.
-
-        Pump: Automation is ignored, but the Safety Timeout remains active to prevent flooding. 
-
-Safety Lock
-
-If the pump exceeds pumpMaxOnTimeSec, it enters a Safety Lock state. The pump will remain disabled until it receives a manual "OFF" command from the UI or the current active schedule window expires.
+## 📝 Schedule Format (Cron)
+`MINUTE HOUR DAY MONTH DAY_OF_WEEK`
+Example: `0 12 * * *` — every day at 12:00.

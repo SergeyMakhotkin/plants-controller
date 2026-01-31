@@ -37,7 +37,7 @@
 
     <div class="relay-card">
         <h3>%RELAY_NAME_1% (D5)</h3>
-        <p><strong>Состояние:</strong> <span id="status_1">%RELAY_STATE_1%</span></p>
+        <p>Статус: <span id="status-1">%RELAY_STATE_1%</span> <span id="mode-1">%RELAY_MODE_1%</span></p>
         <div class="control-row">
             %RELAY_CONTROL_1%
         </div>
@@ -80,43 +80,42 @@
 
     <script>
         function toggleRelay(relayId, action) {
-            const url = '/' + action + '?rid=' + relayId;
-            const statusElement = document.getElementById('status_' + relayId);
-            const btn = document.getElementById('btn_' + relayId);
+            const btn = document.getElementById('btn-' + relayId);
+            const statusElement = document.getElementById('status-' + relayId);
+            const modeElement = document.getElementById('mode-' + relayId);
 
-            // Визуальный отклик, что команда ушла
-            if (statusElement) statusElement.innerHTML = '...';
-
-            fetch(url)
+            fetch(`/${action}?rid=${relayId}`)
                 .then(response => response.json())
                 .then(data => {
-                    if (data.status === 'OK') {
-                        const isON = (data.state === 'ON');
+                    if (data.id !== undefined) {
+                        const isON = data.state;
+                        const isManual = data.manual;
 
-                        // 1. Обновляем текстовый статус
+                        // 1. Обновляем статус (On/Off)
                         statusElement.innerHTML = isON ?
                             "<span style='color:green;font-weight:bold;'>On</span>" :
                             "<span style='color:red;'>Off</span>";
 
-                        // 2. Обновляем кнопку (цвет, текст и действие)
-                        if (btn) {
-                            if (isON) {
-                                btn.className = 'button off';
-                                btn.innerHTML = 'ВЫКЛЮЧИТЬ';
-                                // Меняем функцию клика на противоположную
-                                btn.setAttribute('onclick', `toggleRelay(${relayId}, 'off'); return false;`);
-                            } else {
-                                btn.className = 'button on';
-                                btn.innerHTML = 'ВКЛЮЧИТЬ';
-                                btn.setAttribute('onclick', `toggleRelay(${relayId}, 'on'); return false;`);
-                            }
+                        // 2. Обновляем индикатор режима (Manual/Auto)
+                        if (modeElement) {
+                            modeElement.innerHTML = isManual ?
+                                "<span class='mode-label mode-manual'>Manual</span>" :
+                                "<span class='mode-label mode-auto'>Auto</span>";
+                        }
+
+                        // 3. Обновляем кнопку
+                        if (isON) {
+                            btn.className = 'button off';
+                            btn.innerHTML = 'ВЫКЛЮЧИТЬ';
+                            btn.setAttribute('onclick', `toggleRelay(${relayId}, 'off'); return false;`);
+                        } else {
+                            btn.className = 'button on';
+                            btn.innerHTML = 'ВКЛЮЧИТЬ';
+                            btn.setAttribute('onclick', `toggleRelay(${relayId}, 'on'); return false;`);
                         }
                     }
                 })
-                .catch(err => {
-                    alert('Ошибка связи: ' + err);
-                    window.location.reload(); // Если совсем всё плохо — обновим страницу
-                });
+                .catch(err => alert('Ошибка: ' + err));
         }
     </script>
 </body>
