@@ -7,116 +7,137 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
-    <h1>Система жизнеобеспечения растений (v%VERSION%)</h1>
+<h1>Система жизнеобеспечения растений (v%VERSION%)</h1>
 
-    <div class="card-container">
-        <div class="card system-info">
-            <h2>⚙️ Система</h2>
-            <p><strong>Время:</strong> <span id="time">%TIME%</span></p>
-            <p><strong>Uptime:</strong> %UPTIME%</p>
-            <p><strong>IP:</strong> %IP%</p>
-            <p><strong>VCC:</strong> %VCC%</p>
-            <p><strong>Память (Heap):</strong> %HEAP% байт</p>
-            <p><strong>Причина перезагрузки:</strong> %RESET_REASON%</p>
-            <p class="links">
-                <a href="/logs">📜 Логи</a> |
-                <a href="/settings">🛠️ Настройки</a>
-            </p>
-        </div>
-
-        <div class="card sensor-info">
-            <h2>🌡️ Датчики</h2>
-            %BMP_INFO%
-            %LEAK_INFO%
-            <p class="note">Данные обновляются при загрузке страницы.</p>
-        </div>
+<div class="card-container">
+    <div class="card system-info">
+        <h2>⚙️ Система</h2>
+        <p><strong>Время:</strong> <span id="time">%TIME%</span></p>
+        <p><strong>Uptime:</strong> %UPTIME%</p>
+        <p><strong>IP:</strong> %IP%</p>
+        <p><strong>VCC:</strong> %VCC%</p>
+        <p><strong>Память (Heap):</strong> %HEAP% байт</p>
+        <p><strong>Причина перезагрузки:</strong> %RESET_REASON%</p>
+        <p class="links">
+            <a href="/logs">📜 Логи</a> |
+            <a href="/settings">🛠️ Настройки</a>
+        </p>
     </div>
 
-    <hr>
-    <h2>⚡ Управление и Расписание</h2>
-
-    <div class="relay-card">
-        <h3>%RELAY_NAME_1% (D5)</h3>
-        <p>Статус: <span id="status-1">%RELAY_STATE_1%</span> <span id="mode-1">%RELAY_MODE_1%</span></p>
-        <div class="control-row">
-            %RELAY_CONTROL_1%
-        </div>
-        <h4>Расписание <a href="/add?rid=0">[+]</a></h4>
-        <table>
-            <thead><tr><th>#</th><th>Старт</th><th>Конец/Мин</th><th>Удалить</th></tr></thead>
-            %SCHEDULES_1%
-        </table>
+    <div class="card sensor-info">
+        <h2>🌡️ Датчики</h2>
+        %BMP_INFO%
+        %LEAK_INFO%
+        <p class="note">Данные обновляются при загрузке страницы.</p>
     </div>
+</div>
 
-    <div class="relay-card">
-        <h3>%RELAY_NAME_2% (D6)</h3>
-        <p><strong>Состояние:</strong> <span id="status_2">%RELAY_STATE_2%</span></p>
-        <div class="control-row">
-            %RELAY_CONTROL_2%
-        </div>
-        <h4>Расписание <a href="/add?rid=1">[+]</a></h4>
-        <table>
-            <thead><tr><th>#</th><th>Старт</th><th>Конец/Мин</th><th>Удалить</th></tr></thead>
-            %SCHEDULES_2%
-        </table>
+<hr>
+<h2>⚡ Управление и Расписание</h2>
+
+<div class="relay-card">
+    <h3>%RELAY_NAME_1% (D5)</h3>
+    <p>Статус: <span id="status-1">%RELAY_STATE_1%</span> <span id="mode-1">%RELAY_MODE_1%</span></p>
+    <div class="control-row">
+        %RELAY_CONTROL_1%
     </div>
+    <h4>Расписание <a href="/add?rid=0">[+]</a></h4>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Старт</th>
+            <th>Конец/Мин</th>
+            <th>Удалить</th>
+        </tr>
+        </thead>
+        %SCHEDULES_1%
+    </table>
+</div>
 
-    <div class="relay-card main-pump">
-        <h3>%RELAY_NAME_3% (D7)</h3>
-        <p><strong>Состояние:</strong> <span id="status_3">%RELAY_STATE_3%</span></p>
-        <div class="control-row">
-            %RELAY_CONTROL_3%
-        </div>
-        <h4>Расписание <a href="/add?rid=2">[+]</a></h4>
-        <table>
-            <thead><tr><th>#</th><th>Старт</th><th>Конец/Мин</th><th>Удалить</th></tr></thead>
-            %SCHEDULES_3%
-        </table>
+<div class="relay-card">
+    <h3>%RELAY_NAME_2% (D6)</h3>
+    <p><strong>Состояние:</strong> <span id="status_2">%RELAY_STATE_2%</span></p>
+    <div class="control-row">
+        %RELAY_CONTROL_2%
     </div>
+    <h4>Расписание <a href="/add?rid=1">[+]</a></h4>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Старт</th>
+            <th>Конец/Мин</th>
+            <th>Удалить</th>
+        </tr>
+        </thead>
+        %SCHEDULES_2%
+    </table>
+</div>
 
-    <footer>
-        <p>ESP8266 Controller | 2025</p>
-    </footer>
+<div class="relay-card main-pump">
+    <h3>%RELAY_NAME_3% (D7)</h3>
+    <p><strong>Состояние:</strong> <span id="status_3">%RELAY_STATE_3%</span></p>
+    <div class="control-row">
+        %RELAY_CONTROL_3%
+    </div>
+    <h4>Расписание <a href="/add?rid=2">[+]</a></h4>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Старт</th>
+            <th>Конец/Мин</th>
+            <th>Удалить</th>
+        </tr>
+        </thead>
+        %SCHEDULES_3%
+    </table>
+</div>
 
-    <script>
-        function toggleRelay(relayId, action) {
-            const btn = document.getElementById('btn-' + relayId);
-            const statusElement = document.getElementById('status-' + relayId);
-            const modeElement = document.getElementById('mode-' + relayId);
+<footer>
+    <p>ESP8266 Controller | 2025</p>
+</footer>
 
-            fetch(`/${action}?rid=${relayId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.id !== undefined) {
-                        const isON = data.state;
-                        const isManual = data.manual;
+<script>
+    function toggleRelay(relayId, action) {
+        const btn = document.getElementById('btn-' + relayId);
+        const statusElement = document.getElementById('status-' + relayId);
+        const modeElement = document.getElementById('mode-' + relayId);
 
-                        // 1. Обновляем статус (On/Off)
-                        statusElement.innerHTML = isON ?
-                            "<span style='color:green;font-weight:bold;'>On</span>" :
-                            "<span style='color:red;'>Off</span>";
+        fetch(`/${action}?rid=${relayId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.id !== undefined) {
+                    const isON = data.state;
+                    const isManual = data.manual;
 
-                        // 2. Обновляем индикатор режима (Manual/Auto)
-                        if (modeElement) {
-                            modeElement.innerHTML = isManual ?
-                                "<span class='mode-label mode-manual'>Manual</span>" :
-                                "<span class='mode-label mode-auto'>Auto</span>";
-                        }
+                    // 1. Обновляем статус (On/Off)
+                    statusElement.innerHTML = isON ?
+                        "<span style='color:green;font-weight:bold;'>On</span>" :
+                        "<span style='color:red;'>Off</span>";
 
-                        // 3. Обновляем кнопку
-                        if (isON) {
-                            btn.className = 'button off';
-                            btn.innerHTML = 'ВЫКЛЮЧИТЬ';
-                            btn.setAttribute('onclick', `toggleRelay(${relayId}, 'off'); return false;`);
-                        } else {
-                            btn.className = 'button on';
-                            btn.innerHTML = 'ВКЛЮЧИТЬ';
-                            btn.setAttribute('onclick', `toggleRelay(${relayId}, 'on'); return false;`);
-                        }
+                    // 2. Обновляем индикатор режима (Manual/Auto)
+                    if (modeElement) {
+                        modeElement.innerHTML = isManual ?
+                            "<span class='mode-label mode-manual'>Manual</span>" :
+                            "<span class='mode-label mode-auto'>Auto</span>";
                     }
-                })
-                .catch(err => alert('Ошибка: ' + err));
-        }
-    </script>
+
+                    // 3. Обновляем кнопку
+                    if (isON) {
+                        btn.className = 'button off';
+                        btn.innerHTML = 'ВЫКЛЮЧИТЬ';
+                        btn.setAttribute('onclick', `toggleRelay(${relayId}, 'off'); return false;`);
+                    } else {
+                        btn.className = 'button on';
+                        btn.innerHTML = 'ВКЛЮЧИТЬ';
+                        btn.setAttribute('onclick', `toggleRelay(${relayId}, 'on'); return false;`);
+                    }
+                }
+            })
+            .catch(err => alert('Ошибка: ' + err));
+    }
+</script>
 </body>
 </html>

@@ -211,7 +211,7 @@ code {
     padding: 10px;
     background-color: #fff;
     border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .log-pre {
@@ -224,12 +224,12 @@ code {
     text-align: left;
 
     /* Исправление переполнения */
-    white-space: pre-wrap;       /* Перенос строк */
-    word-wrap: break-word;       /* Разрыв длинных слов */
+    white-space: pre-wrap; /* Перенос строк */
+    word-wrap: break-word; /* Разрыв длинных слов */
     overflow-wrap: break-word;
 
-    max-height: 65vh;            /* Ограничение по высоте */
-    overflow-y: auto;            /* Вертикальная прокрутка */
+    max-height: 65vh; /* Ограничение по высоте */
+    overflow-y: auto; /* Вертикальная прокрутка */
 }
 
 /* === Адаптивность для мобильных === */
@@ -279,7 +279,9 @@ footer {
 }
 
 @keyframes blink {
-    50% { opacity: 0.5; }
+    50% {
+        opacity: 0.5;
+    }
 }
 
 .mode-label {

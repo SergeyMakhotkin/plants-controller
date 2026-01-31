@@ -7,30 +7,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
-    <div class="form-container">
-        <h2>➕ Новый интервал</h2>
-        <form action="/addsave" method="GET">
-            <input type="hidden" name="rid" value="%RID%">
+<div class="form-container">
+    <h2>➕ Новый интервал</h2>
+    <form action="/addsave" method="GET">
+        <input type="hidden" name="rid" value="%RID%">
 
-            <div class="form-group">
-                <strong>Время начала (Cron):</strong>
-                <input type="text" name="start" placeholder="00 12 * * *" required>
-                <small>Формат: мин час день мес день_нед</small>
-            </div>
+        <div class="form-group">
+            <strong>Время начала (Cron):</strong>
+            <input type="text" name="start" placeholder="00 12 * * *" required>
+            <small>Формат: мин час день мес день_нед</small>
+        </div>
 
-            <div class="form-group">
-                <strong>Тип завершения:</strong>
-                <p>Укажите Либо время конца, Либо длительность в сек.</p>
-                <strong>Конец (Cron):</strong>
-                <input type="text" name="end" placeholder="30 12 * * *">
-                <strong>ИЛИ Длительность (сек):</strong>
-                <input type="number" name="duration" placeholder="60">
-            </div>
+        <div class="form-group">
+            <strong>Тип завершения:</strong>
+            <p>Укажите Либо время конца, Либо длительность в сек.</p>
+            <strong>Конец (Cron):</strong>
+            <input type="text" name="end" placeholder="30 12 * * *">
+            <strong>ИЛИ Длительность (сек):</strong>
+            <input type="number" name="duration" placeholder="60">
+        </div>
 
-            <input type="submit" value="Сохранить">
-            <br><br>
-            <a href="/" style="display:block; text-align:center;">Отмена</a>
-        </form>
-    </div>
+        <input type="submit" value="Сохранить">
+        <br><br>
+        <a href="/" style="display:block; text-align:center;">Отмена</a>
+    </form>
+</div>
 </body>
 </html>

@@ -9,7 +9,7 @@
 // ========== Configuration ==========
 ADC_MODE(ADC_VCC); // for monitoring VCC
 
-const char* ntpServer = "pool.ntp.org";
+const char *ntpServer = "pool.ntp.org";
 const int gmtOffset_sec = 3600 * 4;
 const int daylightOffset_sec = 0;
 
@@ -67,7 +67,7 @@ struct Relay {
 Relay r1 = {0, D1, "Light 1", false};
 Relay r2 = {1, D2, "Light 2", false};
 Relay r3 = {2, D5, "Pump", true};
-Relay* relays[3] = {&r1, &r2, &r3};
+Relay *relays[3] = {&r1, &r2, &r3};
 constexpr int RELAY_COUNT = 3;
 
 ESP8266WebServer server(webServerPort);
@@ -97,9 +97,9 @@ String getTimestamp() {
 }
 
 // --- Logging ---
-const char* LOG_FILENAME = "/log.txt";
+const char *LOG_FILENAME = "/log.txt";
 
-void logEvent(const String& message) {
+void logEvent(const String &message) {
     const String timestamp = getTimestamp();
     if (timestamp == "") {
         Serial.println("[Time not set] " + message);
@@ -141,11 +141,11 @@ void saveRelayState() {
 
     // 3. Обновляем данные для каждого реле
     for (int i = 0; i < RELAY_COUNT; i++) {
-        Relay* r = relays[i];
+        Relay *r = relays[i];
         bool found = false;
 
         // Ищем объект с соответствующим ID в существующем массиве
-        for (JsonObject rObj : relayArray) {
+        for (JsonObject rObj: relayArray) {
             if (rObj["id"] == r->id) {
                 rObj["manualMode"] = r->manualMode;
                 found = true;
@@ -197,7 +197,10 @@ void saveConfig() {
         }
     }
     File f = LittleFS.open("/config.json", "w");
-    if (f) { serializeJson(doc, f); f.close(); }
+    if (f) {
+        serializeJson(doc, f);
+        f.close();
+    }
 }
 
 void loadConfig() {
@@ -227,9 +230,9 @@ void loadConfig() {
             JsonArray sArr = rObj["schedules"];
 
             relays[i]->scheduleCount = 0;
-            for (JsonObject sObj : sArr) {
+            for (JsonObject sObj: sArr) {
                 if (relays[i]->scheduleCount < MAX_SCHEDULES) {
-                    Schedule& s = relays[i]->schedules[relays[i]->scheduleCount++];
+                    Schedule &s = relays[i]->schedules[relays[i]->scheduleCount++];
                     s.startCron = sObj["start"] | "";
                     s.endCron = sObj["end"] | "";
                     s.duration = sObj["dur"];
@@ -260,20 +263,20 @@ void checkLeakSensor() {
     bool currentStatus = (digitalRead(LEAK_SENSOR_PIN) == LOW);
     if (currentStatus != leakDetected) {
         leakDetected = currentStatus;
-         logEvent(leakDetected ? "ALARM: Leak detected!" : "SYSTEM: Leak cleared.");
+        logEvent(leakDetected ? "ALARM: Leak detected!" : "SYSTEM: Leak cleared.");
     }
 }
 
 // --- Schedule logic ---
-bool isCurrentTimeInSchedule(const Schedule& s) {
+bool isCurrentTimeInSchedule(const Schedule &s) {
     if (!updateTime()) return false;
 
     int curH = timeinfo.tm_hour;
     int curM = timeinfo.tm_min;
     int curS = timeinfo.tm_sec;
     int curDay = timeinfo.tm_mday;
-    int curMonth = timeinfo.tm_mon + 1;     // tm_mon (0-11)
-    int curDow = timeinfo.tm_wday;          // tm_wday (0-6)
+    int curMonth = timeinfo.tm_mon + 1; // tm_mon (0-11)
+    int curDow = timeinfo.tm_wday; // tm_wday (0-6)
 
     int firstSpace = s.startCron.indexOf(' ');
     if (firstSpace == -1) return false; // Некорректный формат
@@ -287,8 +290,9 @@ bool isCurrentTimeInSchedule(const Schedule& s) {
     String minStr = s.startCron.substring(0, firstSpace);
     String hourStr = s.startCron.substring(firstSpace + 1, secondSpace);
     String dayStr = (thirdSpace != -1) ? s.startCron.substring(secondSpace + 1, thirdSpace) : "*";
-    String monthStr = (thirdSpace != -1 && fourthSpace != -1) ?
-                      s.startCron.substring(thirdSpace + 1, fourthSpace) : "*";
+    String monthStr = (thirdSpace != -1 && fourthSpace != -1)
+                          ? s.startCron.substring(thirdSpace + 1, fourthSpace)
+                          : "*";
     String dowStr = (fourthSpace != -1) ? s.startCron.substring(fourthSpace + 1) : "*";
 
     // 3. Проверка соответствия дня месяца
@@ -344,13 +348,13 @@ bool isCurrentTimeInSchedule(const Schedule& s) {
 
     int startM = (minStr == "*") ? 0 : minStr.toInt();
     int startH = (hourStr == "*") ? 0 : hourStr.toInt();
-    long startTotalSec = (long)startH * 3600 + (long)startM * 60;
+    long startTotalSec = (long) startH * 3600 + (long) startM * 60;
 
     int endM = (eMinStr == "*") ? 59 : eMinStr.toInt();
     int endH = (eHourStr == "*") ? 23 : eHourStr.toInt();
-    long endTotalSec = (long)endH * 3600 + (long)endM * 60 + 59;
+    long endTotalSec = (long) endH * 3600 + (long) endM * 60 + 59;
 
-    long curTotalSec = (long)curH * 3600 + (long)curM * 60 + curS;
+    long curTotalSec = (long) curH * 3600 + (long) curM * 60 + curS;
 
     if (endTotalSec < startTotalSec) {
         return (curTotalSec >= startTotalSec || curTotalSec < endTotalSec);
@@ -362,7 +366,7 @@ void updateRelaysLogic() {
     if (!updateTime()) return;
 
     for (int i = 0; i < RELAY_COUNT; i++) {
-        Relay* r = relays[i];
+        Relay *r = relays[i];
         bool anyScheduleActive = false;
 
         // check all schedule slots
@@ -391,7 +395,7 @@ void updateRelaysLogic() {
 
         // check the protective time interval (isLimited)
         if (targetState && r->isLimited) {
-            if (millis() - r->lastOnTime > (unsigned long)relayMaxWorkTimeSec * 1000) {
+            if (millis() - r->lastOnTime > (unsigned long) relayMaxWorkTimeSec * 1000) {
                 targetState = false;
                 r->manualMode = false; // Возврат в авто
                 logEvent("SAFETY: " + r->name + " timeout. Manual mode reset.");
@@ -413,10 +417,11 @@ void updateRelaysLogic() {
 String getSchedulesTable(int rid) {
     String html = "";
     for (int i = 0; i < relays[rid]->scheduleCount; i++) {
-        Schedule& s = relays[rid]->schedules[i];
+        Schedule &s = relays[rid]->schedules[i];
         html += "<tr><td>" + String(i + 1) + "</td><td><code>" + s.startCron + "</code></td><td>";
         html += s.useDuration ? (String(s.duration) + "s") : ("<code>" + s.endCron + "</code>");
-        html += "</td><td><a href='/del?rid=" + String(rid) + "&id=" + String(i) + "' style='color:red;'>[X]</a></td></tr>";
+        html += "</td><td><a href='/del?rid=" + String(rid) + "&id=" + String(i) +
+                "' style='color:red;'>[X]</a></td></tr>";
     }
     return html.length() > 0 ? html : "<tr><td colspan='4'>No schedules</td></tr>";
 }
@@ -429,10 +434,10 @@ enum class RelayActionType {
 
 String getRelayActionTypeName(RelayActionType type) {
     switch (type) {
-        case RelayActionType::SCHEDULED:     return "scheduled";
-        case RelayActionType::WEB:           return "web ui";
+        case RelayActionType::SCHEDULED: return "scheduled";
+        case RelayActionType::WEB: return "web ui";
         // case RelayActionType::BUTTON:        return "button";
-        default:                             return "unknown";
+        default: return "unknown";
     }
 }
 
@@ -447,7 +452,7 @@ void handleRelayAJAX(bool targetState) {
         server.send(400, "application/json", "{\"status\":\"ERROR\",\"message\":\"Invalid rid\"}");
         return;
     }
-    Relay* r = relays[rid];
+    Relay *r = relays[rid];
 
     if (r->state == targetState && r->manualMode) {
         r->manualMode = false;
@@ -476,7 +481,8 @@ void handleRelayAJAX(bool targetState) {
 bool checkAuth() {
     if (!authEnabled) return true;
     if (!server.authenticate(WEB_USER, WEB_PASS)) {
-        server.requestAuthentication(); return false;
+        server.requestAuthentication();
+        return false;
     }
     return true;
 }
@@ -484,32 +490,31 @@ bool checkAuth() {
 //web server handlers
 void webHandleRoot() {
     if (!checkAuth()) return;
-        File f = LittleFS.open("/index.html", "r");
-        String htmlStr = f.readString();
-        f.close();
+    File f = LittleFS.open("/index.html", "r");
+    String htmlStr = f.readString();
+    f.close();
 
-        htmlStr.replace("%TIME%", getTimestamp());
-        htmlStr.replace("%IP%", WiFi.localIP().toString());
-        htmlStr.replace("%VERSION%", VERSION);
+    htmlStr.replace("%TIME%", getTimestamp());
+    htmlStr.replace("%IP%", WiFi.localIP().toString());
+    htmlStr.replace("%VERSION%", VERSION);
 
-        for(int i=0; i<3; i++) {
-            htmlStr.replace("%RELAY_NAME_"+String(i+1)+"%", relays[i]->name);
-            htmlStr.replace("%RELAY_STATE_"+String(i+1)+"%", relays[i]->state ? "On" : "Off");
+    for (int i = 0; i < 3; i++) {
+        htmlStr.replace("%RELAY_NAME_" + String(i + 1) + "%", relays[i]->name);
+        htmlStr.replace("%RELAY_STATE_" + String(i + 1) + "%", relays[i]->state ? "On" : "Off");
 
-            // Добавляем отображение режима
-            String modeHtml = relays[i]->manualMode ?
-                "<span class='mode-label mode-manual'>Manual</span>" :
-                "<span class='mode-label mode-auto'>Auto</span>";
-            htmlStr.replace("%RELAY_MODE_"+String(i+1)+"%", modeHtml);
+        // Добавляем отображение режима
+        String modeHtml = relays[i]->manualMode
+                              ? "<span class='mode-label mode-manual'>Manual</span>"
+                              : "<span class='mode-label mode-auto'>Auto</span>";
+        htmlStr.replace("%RELAY_MODE_" + String(i + 1) + "%", modeHtml);
 
-            htmlStr.replace("%SCHEDULES_"+String(i+1)+"%", getSchedulesTable(i));
-        }
-        server.send(200, "text/html", htmlStr);
+        htmlStr.replace("%SCHEDULES_" + String(i + 1) + "%", getSchedulesTable(i));
+    }
+    server.send(200, "text/html", htmlStr);
 }
 
 void webHandleRelayOn() {
-
-    if(checkAuth()) {
+    if (checkAuth()) {
         handleRelayAJAX(true);
     } else {
         logEvent("WARNING: unauthorized ajax request for 'on' action");
@@ -517,7 +522,7 @@ void webHandleRelayOn() {
 }
 
 void webHandleRelayOff() {
-    if(checkAuth()) {
+    if (checkAuth()) {
         handleRelayAJAX(false);
     } else {
         logEvent("WARNING: unauthorized ajax request for 'on' action");
@@ -551,58 +556,56 @@ void webHandleLogs() {
 void webHandleSettings() {
     if (!checkAuth()) return;
 
-        // Если запрос содержит параметры — сохраняем их
-        // TODO rename vars
-        if (server.hasArg("pumpMax") || server.hasArg("leakEn") || server.hasArg("bmpEn") || server.hasArg("auth")) {
-            int oldPumpMax = relayMaxWorkTimeSec;
-            bool oldLeakEnabled = leakSensorEnabled;
-            bool oldBmpEnabled = bmpEnabled;
-            bool oldAuthEnabled = authEnabled;
+    // Если запрос содержит параметры — сохраняем их
+    if (server.hasArg("pumpMax") || server.hasArg("leakEn") || server.hasArg("bmpEn") || server.hasArg("auth")) {
+        int oldPumpMax = relayMaxWorkTimeSec;
+        bool oldLeakEnabled = leakSensorEnabled;
+        bool oldBmpEnabled = bmpEnabled;
+        bool oldAuthEnabled = authEnabled;
 
-            relayMaxWorkTimeSec = server.arg("pumpMax").toInt();
-            leakSensorEnabled = server.hasArg("leakEn");
-            bmpEnabled = server.hasArg("bmpEn");
-            authEnabled = server.hasArg("auth");
-            saveConfig();
+        relayMaxWorkTimeSec = server.arg("pumpMax").toInt();
+        leakSensorEnabled = server.hasArg("leakEn");
+        bmpEnabled = server.hasArg("bmpEn");
+        authEnabled = server.hasArg("auth");
+        saveConfig();
 
-            String logMsg = "Settings updated: ";
-            if (oldPumpMax != relayMaxWorkTimeSec) {
-                logMsg += "pumpMax=" + String(relayMaxWorkTimeSec) + "s ";
-            }
-            if (oldLeakEnabled != leakSensorEnabled) {
-                logMsg += "leak=" + String(leakSensorEnabled ? "ON" : "OFF") + " ";
-            }
-            if (oldBmpEnabled != bmpEnabled) {
-                logMsg += "bmp=" + String(bmpEnabled ? "ON" : "OFF") + " ";
-            }
-            if (oldAuthEnabled != authEnabled) {
-                logMsg += "auth=" + String(authEnabled ? "ON" : "OFF");
-            }
-            logEvent(logMsg);
-
-            // Перенаправляем на главную после сохранения, чтобы не видеть "Settings Updated"
-            server.sendHeader("Location", "/");
-            server.send(303);
-            return;
+        String logMsg = "Settings updated: ";
+        if (oldPumpMax != relayMaxWorkTimeSec) {
+            logMsg += "pumpMax=" + String(relayMaxWorkTimeSec) + "s ";
         }
-        // Если параметров нет — просто показываем страницу настроек
-        File f = LittleFS.open("/settings.html", "r");
-        if (!f) {
-            server.send(404, "text/plain", "Settings template not found");
-            logEvent("ERROR: settings.html not found");
-            return;
+        if (oldLeakEnabled != leakSensorEnabled) {
+            logMsg += "leak=" + String(leakSensorEnabled ? "ON" : "OFF") + " ";
         }
-        String html = f.readString();
-        f.close();
+        if (oldBmpEnabled != bmpEnabled) {
+            logMsg += "bmp=" + String(bmpEnabled ? "ON" : "OFF") + " ";
+        }
+        if (oldAuthEnabled != authEnabled) {
+            logMsg += "auth=" + String(authEnabled ? "ON" : "OFF");
+        }
+        logEvent(logMsg);
 
-        // Заполняем плейсхолдеры в шаблоне
-        html.replace("%PUMP_MAX%", String(relayMaxWorkTimeSec));
-        html.replace("%LEAK_CHECKED%", leakSensorEnabled ? "checked" : "");
-        html.replace("%BMP_CHECKED%", bmpEnabled ? "checked" : "");
-        html.replace("%AUTH_CHECKED%", authEnabled ? "checked" : "");
+        // Перенаправляем на главную после сохранения, чтобы не видеть "Settings Updated"
+        server.sendHeader("Location", "/");
+        server.send(303);
+        return;
+    }
+    // Если параметров нет — просто показываем страницу настроек
+    File f = LittleFS.open("/settings.html", "r");
+    if (!f) {
+        server.send(404, "text/plain", "Settings template not found");
+        logEvent("ERROR: settings.html not found");
+        return;
+    }
+    String html = f.readString();
+    f.close();
 
-        server.send(200, "text/html", html);
+    // Заполняем плейсхолдеры в шаблоне
+    html.replace("%PUMP_MAX%", String(relayMaxWorkTimeSec));
+    html.replace("%LEAK_CHECKED%", leakSensorEnabled ? "checked" : "");
+    html.replace("%BMP_CHECKED%", bmpEnabled ? "checked" : "");
+    html.replace("%AUTH_CHECKED%", authEnabled ? "checked" : "");
 
+    server.send(200, "text/html", html);
 }
 
 void webHandleStyle() {
@@ -620,7 +623,7 @@ void webHandleScheduleAddSave() {
     if (!checkAuth()) return;
     int rid = server.arg("rid").toInt();
     if (rid >= 0 && rid < 3 && relays[rid]->scheduleCount < 10) {
-        Schedule& s = relays[rid]->schedules[relays[rid]->scheduleCount++];
+        Schedule &s = relays[rid]->schedules[relays[rid]->scheduleCount++];
         s.startCron = server.arg("start");
 
         String logMsg = "Schedule added for " + relays[rid]->name + ": start=" + s.startCron;
@@ -629,8 +632,7 @@ void webHandleScheduleAddSave() {
             s.duration = server.arg("duration").toInt();
             s.useDuration = true;
             logMsg += ", duration=" + String(s.duration) + "s";
-        }
-        else {
+        } else {
             s.endCron = server.arg("end");
             s.useDuration = false;
             logMsg += ", end=" + s.endCron;
@@ -655,11 +657,12 @@ void webHandleScheduleDel() {
     int id = server.arg("id").toInt();
     if (rid >= 0 && rid < 3 && id < relays[rid]->scheduleCount) {
         for (int i = id; i < relays[rid]->scheduleCount - 1; i++)
-            relays[rid]->schedules[i] = relays[rid]->schedules[i+1];
+            relays[rid]->schedules[i] = relays[rid]->schedules[i + 1];
         relays[rid]->scheduleCount--;
         saveConfig();
     }
-    server.sendHeader("Location", "/"); server.send(303);
+    server.sendHeader("Location", "/");
+    server.send(303);
 }
 
 // --- Setup и Loop ---
@@ -679,7 +682,7 @@ void setup() {
 
     loadConfig();
 
-    for(int i=0; i<3; i++) {
+    for (int i = 0; i < 3; i++) {
         pinMode(relays[i]->pin, OUTPUT);
         digitalWrite(relays[i]->pin, HIGH);
     }
@@ -708,10 +711,10 @@ void setup() {
 
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("\nWiFi Connected. IP: " + WiFi.localIP().toString());
-         logEvent("SYSTEM: WiFi connected, IP=" + WiFi.localIP().toString());
+        logEvent("SYSTEM: WiFi connected, IP=" + WiFi.localIP().toString());
     } else {
         Serial.println("\nWiFi connection failed!");
-         logEvent("ERROR: WiFi connection failed");
+        logEvent("ERROR: WiFi connection failed");
     }
 
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -725,10 +728,10 @@ void setup() {
     server.on("/off", webHandleRelayOff);
     server.on("/logs", webHandleLogs);
     server.on("/settings", webHandleSettings);
-//    server.on("/add", webHandleScheduleAdd);
+    //    server.on("/add", webHandleScheduleAdd);
     server.on("/addsave", webHandleScheduleAddSave);
-//    server.on("/edit", webHandleScheduleEdit)  //TODO
-//    server.on("/save_schedule", HTTP_POST, handleSaveSchedule);
+    //    server.on("/edit", webHandleScheduleEdit)  //TODO
+    //    server.on("/save_schedule", HTTP_POST, handleSaveSchedule);
     server.on("/del", webHandleScheduleDel);
     server.on("/style.css", webHandleStyle);
 
@@ -755,5 +758,4 @@ void loop() {
         lastSensorRead = currentMillis;
         readBMPData();
     }
-
 }
