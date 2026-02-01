@@ -148,6 +148,7 @@ void saveRelayState() {
         for (JsonObject rObj: relayArray) {
             if (rObj["id"] == r->id) {
                 rObj["manualMode"] = r->manualMode;
+                rObj["state"] = r->state;
                 rObj["lastOnTime"] = (uint32_t) r->lastOnTime;
                 found = true;
                 break;
@@ -186,6 +187,7 @@ void saveConfig() {
         rObj["id"] = relays[i]->id;
         rObj["name"] = relays[i]->name;
         rObj["manualMode"] = relays[i]->manualMode;
+        rObj["state"] = relays[i]->state;
         rObj["isLimited"] = relays[i]->isLimited;
 
         JsonArray sArr = rObj["schedules"].to<JsonArray>();
@@ -227,6 +229,7 @@ void loadConfig() {
         for (int i = 0; i < RELAY_COUNT; i++) {
             JsonObject rObj = rArr[i]; // Получаем объект реле
             relays[i]->manualMode = rObj["manualMode"] | false;
+            relays[i]->state = rObj["state"] | false;
             relays[i]->lastOnTime = rObj["lastOnTime"] | 0;
             relays[i]->isLimited = rObj["isLimited"] | (i == 2); // по умолчанию true только для насоса
             JsonArray sArr = rObj["schedules"];
