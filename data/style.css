@@ -215,8 +215,8 @@ code {
 }
 
 .log-pre {
-    background: #1e1e1e;
-    color: #00ff00;
+    background: #ededed;
+    color: #000000;
     padding: 15px;
     border-radius: 5px;
     font-family: 'Courier New', monospace;

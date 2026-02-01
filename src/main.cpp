@@ -474,7 +474,7 @@ void handleRelayAJAX(bool targetState) {
         r->state = targetState;
         logEvent("MANUAL: " + r->name + " set to " + String(targetState ? "ON" : "OFF"));
     } else {
-        logEvent("AUTO: " + r->name + " mode restored");
+        logEvent("Relay " + r->name + " switched to AUTO mode");
     }
 
     saveRelayState();
@@ -586,7 +586,14 @@ void webHandleLogs() {
     File logFile = LittleFS.open(LOG_FILENAME, "r");
     String logData = "";
     if (logFile) {
-        logData = logFile.readString();
+        while (logFile.available()) {
+            String line = logFile.readStringUntil('\n');
+            line.trim();
+            if (line.length() > 0) {
+                // Reverse log messages
+                logData = line + "\n" + logData;
+            }
+        }
         logFile.close();
     } else {
         logData = "Log file is empty or not found.";
@@ -754,16 +761,19 @@ void setup() {
 
     if (WiFi.status() == WL_CONNECTED) {
         Serial.println("\nWiFi Connected. IP: " + WiFi.localIP().toString());
-        logEvent("SYSTEM: WiFi connected, IP=" + WiFi.localIP().toString());
+        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+        Serial.print("Waiting for NTP time sync");
+        int timeRetry = 0;
+        while (time(nullptr) < 946684800 && timeRetry < 20) {
+            delay(500);
+            Serial.print(".");
+            timeRetry++;
+        }
+        Serial.println("\n\nNTP client initialized");
+        logEvent("SYSTEM: Boot. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
     } else {
         Serial.println("\nWiFi connection failed!");
-        logEvent("ERROR: WiFi connection failed");
     }
-
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-    Serial.println("NTP client initialized");
-    logEvent("SYSTEM: NTP initialized");
-
 
     // web server configuration
     server.on("/", webHandleRoot);
