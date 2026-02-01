@@ -43,7 +43,16 @@ The system operates in two modes: **Auto** (scheduled) and **Manual** (user-driv
 Create a `secrets.ini` file in the project root based on `secrets.ini.tmpl` and specify your WiFi and authentication
 credentials.
 
-### 2. Uploading Data
+### 2. Uploading Firmware
+
+To upload the main firmware:
+
+```bash
+
+pio run --target upload
+```
+
+### 3. Uploading Data
 
 To make the web interface functional, you must upload the files from the `data` folder to LittleFS:
 
@@ -55,13 +64,14 @@ pio run --target uploadfs
 
 ## 🔌 Hardware Pinout
 
-| Component     | NodeMCU Pin | Function                   |
-|---------------|-------------|----------------------------|
-| Relay 1       | D1          | Light 1                    |
-| Relay 2       | D2          | Light 2                    |
-| Relay 3       | D5          | Pump (`isLimited: true`)   |
-| Leak Sensor   | D8          | Digital Input (Active LOW) |
-| I2C (SDA/SCL) | D2 / D1     | BMP280 Sensor              |
+| Component   | NodeMCU Pin | Function                   |
+|-------------|-------------|----------------------------|
+| Relay 1     | D5          | Light 1                    |
+| Relay 2     | D6          | Light 2                    |
+| Relay 3     | D7          | Pump (`isLimited: true`)   |
+| I2C SDA     | D2          | BMP280 Data                |
+| I2C SCL     | D1          | BMP280 Clock               |
+| Leak Sensor | D8          | Digital Input (Active LOW) |
 
 ---
 

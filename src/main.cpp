@@ -59,14 +59,14 @@ struct Relay {
     bool state;
     bool manualMode;
     bool prevScheduledState;
-    unsigned long lastOnTime;
+    time_t lastOnTime;
     Schedule schedules[MAX_SCHEDULES];
     int scheduleCount;
 };
 
-Relay r1 = {0, D1, "Light 1", false};
-Relay r2 = {1, D2, "Light 2", false};
-Relay r3 = {2, D5, "Pump", true};
+Relay r1 = {0, D5, "Light 1", false};
+Relay r2 = {1, D6, "Light 2", false};
+Relay r3 = {2, D7, "Pump", true};
 Relay *relays[3] = {&r1, &r2, &r3};
 constexpr int RELAY_COUNT = 3;
 
@@ -148,6 +148,7 @@ void saveRelayState() {
         for (JsonObject rObj: relayArray) {
             if (rObj["id"] == r->id) {
                 rObj["manualMode"] = r->manualMode;
+                rObj["lastOnTime"] = (uint32_t) r->lastOnTime;
                 found = true;
                 break;
             }
@@ -226,6 +227,7 @@ void loadConfig() {
         for (int i = 0; i < RELAY_COUNT; i++) {
             JsonObject rObj = rArr[i]; // Получаем объект реле
             relays[i]->manualMode = rObj["manualMode"] | false;
+            relays[i]->lastOnTime = rObj["lastOnTime"] | 0;
             relays[i]->isLimited = rObj["isLimited"] | (i == 2); // по умолчанию true только для насоса
             JsonArray sArr = rObj["schedules"];
 
@@ -364,6 +366,7 @@ bool isCurrentTimeInSchedule(const Schedule &s) {
 
 void updateRelaysLogic() {
     if (!updateTime()) return;
+    time_t now = time(nullptr);
 
     for (int i = 0; i < RELAY_COUNT; i++) {
         Relay *r = relays[i];
@@ -388,26 +391,38 @@ void updateRelaysLogic() {
         r->prevScheduledState = anyScheduleActive;
 
         // determining relay state
-        bool targetState = r->state; // По умолчанию оставляем как есть
-        if (!r->manualMode) {
-            targetState = anyScheduleActive;
-        }
+        bool targetState = r->manualMode ? r->state : anyScheduleActive;
 
         // check the protective time interval (isLimited)
-        if (targetState && r->isLimited) {
-            if (millis() - r->lastOnTime > (unsigned long) relayMaxWorkTimeSec * 1000) {
+        if (targetState && r->isLimited && r->lastOnTime > 0 && now > 946684800) {
+            if ((now - r->lastOnTime) > relayMaxWorkTimeSec) {
                 targetState = false;
                 r->manualMode = false; // Возврат в авто
-                logEvent("SAFETY: " + r->name + " timeout. Manual mode reset.");
                 saveRelayState();
+                logEvent("SAFETY: " + r->name + " timeout. Manual mode reset.");
             }
         }
 
-        // apply the state if it has changed
-        if (targetState != r->state) {
+        // 4. ЕДИНСТВЕННАЯ ТОЧКА УПРАВЛЕНИЯ И ЗАПИСИ ВРЕМЕНИ
+        // Проверяем, отличается ли желаемое (target) от текущего (digitalRead)
+        bool currentPhysicalState = (digitalRead(r->pin) == LOW); // LOW = ON
+
+        if (targetState != currentPhysicalState) {
+            if (targetState && !currentPhysicalState) {
+                if (r->lastOnTime == 0) {
+                    r->lastOnTime = now;
+                    saveRelayState();
+                }
+            }
+
+            if (!targetState && currentPhysicalState) {
+                r->lastOnTime = 0;
+                saveRelayState();
+            }
+
+            // apply the state if it has changed
+            digitalWrite(r->pin, targetState ? LOW : HIGH);
             r->state = targetState;
-            digitalWrite(r->pin, r->state ? LOW : HIGH);
-            if (r->state) r->lastOnTime = millis();
             logEvent(r->name + (r->state ? " ON" : " OFF"));
         }
     }
@@ -453,19 +468,13 @@ void handleRelayAJAX(bool targetState) {
         return;
     }
     Relay *r = relays[rid];
+    r->manualMode = !r->manualMode;
 
-    if (r->state == targetState && r->manualMode) {
-        r->manualMode = false;
-        logEvent("MANUAL: " + r->name + " returned to AUTO mode by repeating command");
+    if (r->manualMode) {
+        r->state = targetState;
+        logEvent("MANUAL: " + r->name + " set to " + String(targetState ? "ON" : "OFF"));
     } else {
-        r->manualMode = true;
-        if (r->state != targetState) {
-            r->state = targetState;
-            digitalWrite(r->pin, r->state ? LOW : HIGH);
-
-            if (r->state) r->lastOnTime = millis();
-            logEvent(r->name + " " + getRelayActionTypeName(RelayActionType::WEB) + (r->state ? " ON" : " OFF"));
-        }
+        logEvent("AUTO: " + r->name + " mode restored");
     }
 
     saveRelayState();
@@ -498,17 +507,51 @@ void webHandleRoot() {
     htmlStr.replace("%IP%", WiFi.localIP().toString());
     htmlStr.replace("%VERSION%", VERSION);
 
-    for (int i = 0; i < 3; i++) {
-        htmlStr.replace("%RELAY_NAME_" + String(i + 1) + "%", relays[i]->name);
-        htmlStr.replace("%RELAY_STATE_" + String(i + 1) + "%", relays[i]->state ? "On" : "Off");
+    unsigned long sec = millis() / 1000;
+    char uptimeBuf[20];
+    snprintf(uptimeBuf, sizeof(uptimeBuf), "%lud %02lu:%02lu:%02lu", sec / 86400, (sec % 86400) / 3600,
+             (sec % 3600) / 60, sec % 60);
+    htmlStr.replace("%UPTIME%", String(uptimeBuf));
+    htmlStr.replace("%VCC%", String(ESP.getVcc() / 1024.0, 2) + "V");
+    htmlStr.replace("%HEAP%", String(ESP.getFreeHeap()));
+    htmlStr.replace("%RESET_REASON%", ESP.getResetReason());
 
-        // Добавляем отображение режима
+    // 2. Информация с датчиков
+    String bmpStr = "Sensor disabled";
+    if (bmpEnabled) {
+        if (bmpAvailable) {
+            bmpStr = "🌡️ Temp: " + String(bmpTemperature, 1) + "°C | 🎈 Pres: " + String(bmpPressure, 1) + " mmHg";
+        } else {
+            bmpStr = "<span style='color:red;'>Sensor error</span>";
+        }
+    }
+    htmlStr.replace("%BMP_INFO%", bmpStr);
+
+    String leakStr = leakSensorEnabled
+                         ? (leakDetected
+                                ? "<span class='status-alarm'>ALARM: LEAK!</span>"
+                                : "<span class='status-ok'>Dry</span>")
+                         : "Disabled";
+    htmlStr.replace("%LEAK_INFO%", "💧 Состояние: " + leakStr);
+
+    // 3. Управление реле
+    for (int i = 0; i < RELAY_COUNT; i++) {
+        int rid = i + 1;
+        htmlStr.replace("%RELAY_NAME_" + String(rid) + "%", relays[i]->name);
+        htmlStr.replace("%RELAY_STATE_" + String(rid) + "%", relays[i]->state ? "On" : "Off");
+
+        // Режим (Manual/Auto)
         String modeHtml = relays[i]->manualMode
                               ? "<span class='mode-label mode-manual'>Manual</span>"
                               : "<span class='mode-label mode-auto'>Auto</span>";
-        htmlStr.replace("%RELAY_MODE_" + String(i + 1) + "%", modeHtml);
+        htmlStr.replace("%RELAY_MODE_" + String(rid) + "%", modeHtml);
 
-        htmlStr.replace("%SCHEDULES_" + String(i + 1) + "%", getSchedulesTable(i));
+        // Настройка кнопки (динамическое состояние при загрузке)
+        htmlStr.replace("%BTN_CLASS_" + String(rid) + "%", relays[i]->state ? "off" : "on");
+        htmlStr.replace("%BTN_TEXT_" + String(rid) + "%", relays[i]->state ? "ВЫКЛЮЧИТЬ" : "ВКЛЮЧИТЬ");
+        htmlStr.replace("%BTN_ACTION_" + String(rid) + "%", relays[i]->state ? "off" : "on");
+
+        htmlStr.replace("%SCHEDULES_" + String(rid) + "%", getSchedulesTable(i));
     }
     server.send(200, "text/html", htmlStr);
 }
