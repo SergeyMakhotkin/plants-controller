@@ -433,7 +433,11 @@ String getSchedulesTable(int rid) {
     String html = "";
     for (int i = 0; i < relays[rid]->scheduleCount; i++) {
         Schedule &s = relays[rid]->schedules[i];
-        html += "<tr><td>" + String(i + 1) + "</td><td><code>" + s.startCron + "</code></td><td>";
+        // Делаем время начала ссылкой для редактирования
+        html += "<tr><td>" + String(i + 1) + "</td>";
+        html += "<td><a href='/edit?rid=" + String(rid) + "&id=" + String(i) + "'><code>" + s.startCron +
+                "</code></a></td>";
+        html += "<td>";
         html += s.useDuration ? (String(s.duration) + "s") : ("<code>" + s.endCron + "</code>");
         html += "</td><td><a href='/del?rid=" + String(rid) + "&id=" + String(i) +
                 "' style='color:red;'>[X]</a></td></tr>";
@@ -669,36 +673,102 @@ void webHandleStyle() {
     }
 }
 
-void webHandleScheduleAddSave() {
+void webHandleScheduleAdd() {
     if (!checkAuth()) return;
-    int rid = server.arg("rid").toInt();
-    if (rid >= 0 && rid < 3 && relays[rid]->scheduleCount < 10) {
-        Schedule &s = relays[rid]->schedules[relays[rid]->scheduleCount++];
-        s.startCron = server.arg("start");
 
-        String logMsg = "Schedule added for " + relays[rid]->name + ": start=" + s.startCron;
-
-        if (server.arg("duration").length() > 0) {
-            s.duration = server.arg("duration").toInt();
-            s.useDuration = true;
-            logMsg += ", duration=" + String(s.duration) + "s";
-        } else {
-            s.endCron = server.arg("end");
-            s.useDuration = false;
-            logMsg += ", end=" + s.endCron;
-        }
-
-        saveConfig();
-        logEvent(logMsg);
+    String rid = server.arg("rid");
+    File f = LittleFS.open("/add.html", "r");
+    if (!f) {
+        server.send(404, "text/plain", "Error: add.html not found in LittleFS");
+        return;
     }
-    server.sendHeader("Location", "/");
-    server.send(303);
+
+    String html = f.readString();
+    f.close();
+
+    html.replace("%RID%", rid);
+    server.send(200, "text/html", html);
 }
 
-//void webHandleScheduleEdit() { // TODO
-//}
+void webHandleScheduleEdit() {
+    if (!checkAuth()) return;
+
+    int rid = server.arg("rid").toInt();
+    int id = server.arg("id").toInt();
+
+    if (rid < 0 || rid >= RELAY_COUNT || id < 0 || id >= relays[rid]->scheduleCount) {
+        server.send(404, "text/plain", "Schedule not found");
+        return;
+    }
+
+    File f = LittleFS.open("/edit.html", "r");
+    if (!f) {
+        server.send(404, "text/plain", "edit.html not found");
+        return;
+    }
+
+    String html = f.readString();
+    f.close();
+
+    Schedule &s = relays[rid]->schedules[id];
+
+    html.replace("%RID%", String(rid));
+    html.replace("%ID%", String(id));
+    html.replace("%START%", s.startCron);
+    html.replace("%END%", s.useDuration ? "" : s.endCron);
+    html.replace("%DURATION%", s.useDuration ? String(s.duration) : "");
+
+    server.send(200, "text/html", html);
+}
 
 void webHandleScheduleSave() {
+    if (!checkAuth()) return;
+
+    if (!server.hasArg("rid")) {
+        server.send(400, "text/plain", "Missing rid");
+        return;
+    }
+
+    int rid = server.arg("rid").toInt();
+    if (rid < 0 || rid >= RELAY_COUNT) return;
+    Relay *r = relays[rid];
+
+    int id = -1;
+    if (server.hasArg("id") && server.arg("id") != "") {
+        id = server.arg("id").toInt();
+    }
+
+    Schedule *s = nullptr;
+
+    if (id >= 0 && id < r->scheduleCount) {
+        // Schedule editing
+        s = &r->schedules[id];
+        logEvent("Schedule UPDATED for " + r->name + " [ID:" + String(id) + "]");
+    } else if (r->scheduleCount < MAX_SCHEDULES) {
+        // Schedule adding
+        s = &r->schedules[r->scheduleCount++];
+        logEvent("Schedule ADDED for " + r->name);
+    } else {
+        server.send(400, "text/plain", "Max schedules reached");
+        return;
+    }
+
+    s->startCron = server.arg("start");
+
+    if (server.arg("duration").length() > 0) {
+        s->duration = server.arg("duration").toInt();
+        s->useDuration = true;
+        s->endCron = "";
+    } else {
+        s->endCron = server.arg("end");
+        s->useDuration = false;
+        s->duration = 0;
+    }
+
+    saveConfig();
+
+    server.sendHeader("Location", "/");
+    server.send(303);
 }
 
 void webHandleScheduleDel() {
@@ -781,10 +851,9 @@ void setup() {
     server.on("/off", webHandleRelayOff);
     server.on("/logs", webHandleLogs);
     server.on("/settings", webHandleSettings);
-    //    server.on("/add", webHandleScheduleAdd);
-    server.on("/addsave", webHandleScheduleAddSave);
-    //    server.on("/edit", webHandleScheduleEdit)  //TODO
-    //    server.on("/save_schedule", HTTP_POST, handleSaveSchedule);
+    server.on("/add", webHandleScheduleAdd);
+    server.on("/edit", webHandleScheduleEdit);
+    server.on("/save", HTTP_POST, webHandleScheduleSave);
     server.on("/del", webHandleScheduleDel);
     server.on("/style.css", webHandleStyle);
 
