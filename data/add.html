@@ -14,7 +14,11 @@
 
         <div class="form-group">
             <strong>Время начала (Cron):</strong>
-            <input type="text" name="start" placeholder="0 12 * * *" required>
+            <input type="text" name="start"
+                   placeholder="0 12 * * *"
+                   pattern="^([0-5]?\d|\*|\*\/(?:[1-5]?\d))\s+([01]?\d|2[0-3]|\*|\*\/(?:[0-2]?\d))\s+([1-9]|[12]\d|3[01]|\*|\*\/(?:[0-3]?\d))\s+([1-9]|1[0-2]|\*|\*\/(?:[0-1]?\d))\s+([0-7]|\*|\*\/[0-7])$"
+                   title="Формат: 5 элементов через пробел (мин час день мес день_нед)"
+                   required>
             <small>Формат: мин час день мес день_нед</small>
         </div>
 
@@ -22,7 +26,10 @@
             <strong>Тип завершения:</strong>
             <p>Укажите Либо время конца, Либо длительность в сек.</p>
             <strong>Конец (Cron):</strong>
-            <input type="text" name="end" placeholder="30 12 * * *">
+            <input type="text" name="end"
+                   placeholder="30 12 * * *"
+                   pattern="^([0-5]?\d|\*|\*\/(?:[1-5]?\d))\s+([01]?\d|2[0-3]|\*|\*\/(?:[0-2]?\d))\s+([1-9]|[12]\d|3[01]|\*|\*\/(?:[0-3]?\d))\s+([1-9]|1[0-2]|\*|\*\/(?:[0-1]?\d))\s+([0-7]|\*|\*\/[0-7])$"
+                   title="Формат: 5 элементов через пробел">
             <strong>ИЛИ Длительность (сек):</strong>
             <input type="number" name="duration" placeholder="60">
         </div>

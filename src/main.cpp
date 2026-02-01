@@ -429,6 +429,57 @@ void updateRelaysLogic() {
 }
 
 // --- WEB Handlers ---
+bool isValidPart(String part, int minVal, int maxVal) {
+    part.trim();
+    if (part == "*") return true;
+
+    // Проверка формата */N
+    if (part.startsWith("*/")) {
+        int v = part.substring(2).toInt();
+        return (v > 0 && v <= maxVal);
+    }
+
+    // Проверка конкретного числа N
+    // toInt() вернет 0, если в строке буквы. Проверим, что это реально число.
+    for (char c: part) if (!isDigit(c)) return false;
+
+    int v = part.toInt();
+    return (v >= minVal && v <= maxVal);
+}
+
+bool isValidCron(String str) {
+    str.trim();
+    // Разбиваем строку по пробелам
+    int partsFound = 0;
+    String parts[5];
+
+    int lastSpace = -1;
+    for (int i = 0; i < 5; i++) {
+        int nextSpace = str.indexOf(' ', lastSpace + 1);
+        if (i < 4 && nextSpace == -1) return false; // Нужно 5 частей
+
+        if (i == 4) parts[i] = str.substring(lastSpace + 1);
+        else parts[i] = str.substring(lastSpace + 1, nextSpace);
+
+        parts[i].trim();
+        if (parts[i].length() == 0) return false;
+
+        lastSpace = nextSpace;
+        partsFound++;
+    }
+
+    if (partsFound != 5) return false;
+
+    // Валидация каждого поля согласно логике isCurrentTimeInSchedule
+    if (!isValidPart(parts[0], 0, 59)) return false; // Минуты
+    if (!isValidPart(parts[1], 0, 23)) return false; // Часы
+    if (!isValidPart(parts[2], 1, 31)) return false; // Дни
+    if (!isValidPart(parts[3], 1, 12)) return false; // Месяцы
+    if (!isValidPart(parts[4], 0, 7)) return false; // День недели (0-7)
+
+    return true;
+}
+
 String getSchedulesTable(int rid) {
     String html = "";
     for (int i = 0; i < relays[rid]->scheduleCount; i++) {
@@ -731,13 +782,27 @@ void webHandleScheduleSave() {
 
     int rid = server.arg("rid").toInt();
     if (rid < 0 || rid >= RELAY_COUNT) return;
-    Relay *r = relays[rid];
+
+    String start = server.arg("start");
+    String end = server.arg("end");
+    String durationRaw = server.arg("duration");
+
+    if (!isValidCron(start)) {
+        server.send(400, "text/plain", "Invalid Start Cron format. Need 5 parts.");
+        return;
+    }
+
+    if (durationRaw.length() == 0 && !isValidCron(end)) {
+        server.send(400, "text/plain", "Invalid End Cron format or Duration missing.");
+        return;
+    }
 
     int id = -1;
     if (server.hasArg("id") && server.arg("id") != "") {
         id = server.arg("id").toInt();
     }
 
+    Relay *r = relays[rid];
     Schedule *s = nullptr;
 
     if (id >= 0 && id < r->scheduleCount) {
@@ -755,12 +820,12 @@ void webHandleScheduleSave() {
 
     s->startCron = server.arg("start");
 
-    if (server.arg("duration").length() > 0) {
-        s->duration = server.arg("duration").toInt();
+    if (durationRaw.length() > 0) {
+        s->duration = durationRaw.toInt();
         s->useDuration = true;
         s->endCron = "";
     } else {
-        s->endCron = server.arg("end");
+        s->endCron = end;
         s->useDuration = false;
         s->duration = 0;
     }
