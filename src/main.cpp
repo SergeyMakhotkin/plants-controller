@@ -844,13 +844,13 @@ void setup() {
     }
     pinMode(LEAK_SENSOR_PIN, INPUT_PULLUP);
 
-    // Init BMP180
+    // Init BMP280
     Wire.begin();
     if (bmp.begin()) {
         bmpAvailable = true;
-        Serial.println("BMP180 initialized");
+        Serial.println("BMP280 initialized");
     } else {
-        Serial.println("BMP180 not found");
+        Serial.println("BMP280 not found");
     }
 
     WiFi.mode(WIFI_STA);
