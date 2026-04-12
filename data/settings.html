@@ -7,39 +7,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
-    <div class="form-container">
-        <h2>🛠️ Настройки</h2>
-        <form action="/settings" method="GET">
-            <div class="form-group">
-                <strong>Макс. работа насоса (сек):</strong>
-                <input type="number" name="pumpMax" value="%PUMP_MAX%" required>
-            </div>
+<div class="form-container">
+    <h2>🛠️ Настройки</h2>
+    <form action="/settings" method="GET">
+        <div class="form-group">
+            <strong>Макс. работа насоса (сек):</strong>
+            <input type="number" name="pumpMax" value="%PUMP_MAX%" required>
+        </div>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" name="leakEn" value="1" %LEAK_CHECKED%>
-                    Включить датчик протечки (D8)
-                </label>
-            </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="leakEn" value="1" %LEAK_CHECKED%>
+                Включить датчик протечки (D8)
+            </label>
+        </div>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" name="bmpEn" value="1" %BMP_CHECKED%>
-                    Включить датчик температуры и давления
-                </label>
-            </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="bmpEn" value="1" %BMP_CHECKED%>
+                Включить датчик температуры и давления
+            </label>
+        </div>
 
-            <div class="form-group">
-                <label>
-                    <input type="checkbox" name="auth" value="1" %AUTH_CHECKED%>
-                    Включить пароль на вход
-                </label>
-            </div>
+        <div class="form-group">
+            <label>
+                <input type="checkbox" name="auth" value="1" %AUTH_CHECKED%>
+                Включить пароль на вход
+            </label>
+        </div>
 
-            <input type="submit" value="Применить">
-            <br><br>
-            <a href="/" style="display:block; text-align:center;">Назад</a>
-        </form>
-    </div>
+        <input type="submit" value="Применить">
+        <br><br>
+        <a href="/" style="display:block; text-align:center;">Назад</a>
+    </form>
+</div>
 </body>
 </html>

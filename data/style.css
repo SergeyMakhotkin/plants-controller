@@ -211,12 +211,12 @@ code {
     padding: 10px;
     background-color: #fff;
     border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .log-pre {
-    background: #1e1e1e;
-    color: #00ff00;
+    background: #ededed;
+    color: #000000;
     padding: 15px;
     border-radius: 5px;
     font-family: 'Courier New', monospace;
@@ -224,12 +224,12 @@ code {
     text-align: left;
 
     /* Исправление переполнения */
-    white-space: pre-wrap;       /* Перенос строк */
-    word-wrap: break-word;       /* Разрыв длинных слов */
+    white-space: pre-wrap; /* Перенос строк */
+    word-wrap: break-word; /* Разрыв длинных слов */
     overflow-wrap: break-word;
 
-    max-height: 65vh;            /* Ограничение по высоте */
-    overflow-y: auto;            /* Вертикальная прокрутка */
+    max-height: 65vh; /* Ограничение по высоте */
+    overflow-y: auto; /* Вертикальная прокрутка */
 }
 
 /* === Адаптивность для мобильных === */
@@ -279,5 +279,59 @@ footer {
 }
 
 @keyframes blink {
-    50% { opacity: 0.5; }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.mode-label {
+    font-size: 0.75em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    font-weight: bold;
+    color: white;
+}
+
+.mode-manual {
+    background-color: #ff9800; /* Оранжевый для ручного режима */
+}
+
+.mode-auto {
+    background-color: #4caf50; /* Зеленый для авто */
+}
+
+/* === Индикаторы режима (Manual/Auto) === */
+.mode-label {
+    font-size: 0.75em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: 10px;
+    text-transform: uppercase;
+    font-weight: bold;
+    color: white;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.mode-manual {
+    background-color: #ff9800; /* Оранжевый */
+}
+
+.mode-auto {
+    background-color: #4caf50; /* Зеленый */
+}
+
+/* Стили для аларма протечки */
+.status-alarm {
+    color: #dc3545;
+    font-weight: bold;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0;
+    }
 }

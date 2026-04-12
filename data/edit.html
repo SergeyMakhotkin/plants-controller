@@ -2,15 +2,16 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Добавить расписание</title>
+    <title>Редактировать расписание</title>
     <link rel="stylesheet" href="/style.css">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body>
 <div class="form-container">
-    <h2>➕ Новый интервал</h2>
+    <h2>📝 Редактировать интервал</h2>
     <form action="/save" method="POST">
         <input type="hidden" name="rid" value="%RID%">
+        <input type="hidden" name="id" value="%ID%">
 
         <div class="form-group">
             <strong>Время начала (Cron):</strong>
@@ -18,23 +19,24 @@
                    placeholder="0 12 * * *"
                    pattern="^([0-5]?\d|\*|\*\/(?:[1-5]?\d))\s+([01]?\d|2[0-3]|\*|\*\/(?:[0-2]?\d))\s+([1-9]|[12]\d|3[01]|\*|\*\/(?:[0-3]?\d))\s+([1-9]|1[0-2]|\*|\*\/(?:[0-1]?\d))\s+([0-7]|\*|\*\/[0-7])$"
                    title="Формат: 5 элементов через пробел (мин час день мес день_нед)"
+                   value="%START%"
                    required>
-            <small>Формат: мин час день мес день_нед</small>
         </div>
 
         <div class="form-group">
             <strong>Тип завершения:</strong>
-            <p>Укажите Либо время конца, Либо длительность в сек.</p>
+            <p>Заполните только одно поле:</p>
             <strong>Конец (Cron):</strong>
             <input type="text" name="end"
                    placeholder="30 12 * * *"
                    pattern="^([0-5]?\d|\*|\*\/(?:[1-5]?\d))\s+([01]?\d|2[0-3]|\*|\*\/(?:[0-2]?\d))\s+([1-9]|[12]\d|3[01]|\*|\*\/(?:[0-3]?\d))\s+([1-9]|1[0-2]|\*|\*\/(?:[0-1]?\d))\s+([0-7]|\*|\*\/[0-7])$"
-                   title="Формат: 5 элементов через пробел">
+                   title="Формат: 5 элементов через пробел"
+                   value="%END%">
             <strong>ИЛИ Длительность (сек):</strong>
-            <input type="number" name="duration" placeholder="60">
+            <input type="number" name="duration" value="%DURATION%">
         </div>
 
-        <input type="submit" value="Сохранить">
+        <input type="submit" value="Сохранить изменения">
         <br><br>
         <a href="/" style="display:block; text-align:center;">Отмена</a>
     </form>
