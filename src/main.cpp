@@ -276,95 +276,63 @@ void checkLeakSensor() {
 bool isCurrentTimeInSchedule(const Schedule &s) {
     if (!updateTime()) return false;
 
-    int curH = timeinfo.tm_hour;
-    int curM = timeinfo.tm_min;
-    int curS = timeinfo.tm_sec;
-    int curDay = timeinfo.tm_mday;
-    int curMonth = timeinfo.tm_mon + 1; // tm_mon (0-11)
-    int curDow = timeinfo.tm_wday; // tm_wday (0-6)
-
+    // 1. Сначала проверяем дату (день, месяц, день недели)
+    // Разбор Cron строки (мин час день мес день_нед)
     int firstSpace = s.startCron.indexOf(' ');
-    if (firstSpace == -1) return false; // Некорректный формат
-
     int secondSpace = s.startCron.indexOf(' ', firstSpace + 1);
-    if (secondSpace == -1) return false;
-
     int thirdSpace = s.startCron.indexOf(' ', secondSpace + 1);
-    int fourthSpace = (thirdSpace != -1) ? s.startCron.indexOf(' ', thirdSpace + 1) : -1;
+    int fourthSpace = s.startCron.indexOf(' ', thirdSpace + 1);
 
     String minStr = s.startCron.substring(0, firstSpace);
     String hourStr = s.startCron.substring(firstSpace + 1, secondSpace);
-    String dayStr = (thirdSpace != -1) ? s.startCron.substring(secondSpace + 1, thirdSpace) : "*";
-    String monthStr = (thirdSpace != -1 && fourthSpace != -1)
-                          ? s.startCron.substring(thirdSpace + 1, fourthSpace)
-                          : "*";
-    String dowStr = (fourthSpace != -1) ? s.startCron.substring(fourthSpace + 1) : "*";
+    String dayStr = s.startCron.substring(secondSpace + 1, thirdSpace);
+    String monthStr = s.startCron.substring(thirdSpace + 1, fourthSpace);
+    String dowStr = s.startCron.substring(fourthSpace + 1);
 
-    // 3. Проверка соответствия дня месяца
+    // Проверка дня месяца
     if (dayStr != "*") {
         if (dayStr.startsWith("*/")) {
-            // Формат */N - каждые N дней (привязка к числам месяца)
             int interval = dayStr.substring(2).toInt();
-            if (interval > 0 && (curDay % interval) != 0) return false;
-        } else {
-            // Конкретный день
-            if (dayStr.toInt() != curDay) return false;
-        }
+            if (interval > 0 && (timeinfo.tm_mday % interval) != 0) return false;
+        } else if (dayStr.toInt() != timeinfo.tm_mday) return false;
     }
-
-    // 4. Проверка месяца
+    // Проверка месяца
     if (monthStr != "*") {
         if (monthStr.startsWith("*/")) {
             int interval = monthStr.substring(2).toInt();
-            if (interval > 0 && (curMonth % interval) != 0) return false;
-        } else {
-            if (monthStr.toInt() != curMonth) return false;
-        }
+            if (interval > 0 && ((timeinfo.tm_mon + 1) % interval) != 0) return false;
+        } else if (monthStr.toInt() != (timeinfo.tm_mon + 1)) return false;
     }
-
-    // 5. Проверка дня недели
+    // Проверка дня недели
     if (dowStr != "*") {
-        int targetDow = dowStr.toInt();
-        // В Cron воскресенье может быть 0 или 7
-        if (targetDow == 7) targetDow = 0;
-        if (targetDow != curDow) return false;
+        int targetDow = (dowStr.toInt() == 7) ? 0 : dowStr.toInt();
+        if (targetDow != timeinfo.tm_wday) return false;
     }
 
-    // 6. Проверка времени (минуты и часы)
-    bool minuteMatch = (minStr == "*") || (minStr.toInt() == curM);
-    bool hourMatch = (hourStr == "*") || (hourStr.toInt() == curH);
-
-    if (!minuteMatch || !hourMatch) return false;
-
-    // 7. Если используется duration
-    if (s.useDuration) {
-        return (curS < s.duration);
-    }
-
-    // 8. Если используется endCron
-    int eFirstSpace = s.endCron.indexOf(' ');
-    if (eFirstSpace == -1) return false;
-
-    int eSecondSpace = s.endCron.indexOf(' ', eFirstSpace + 1);
-    if (eSecondSpace == -1) return false;
-
-    String eMinStr = s.endCron.substring(0, eFirstSpace);
-    String eHourStr = s.endCron.substring(eFirstSpace + 1, eSecondSpace);
-
+    // 2. Проверка времени (Часы и Минуты)
+    long curTotalSec = (long)timeinfo.tm_hour * 3600 + (long)timeinfo.tm_min * 60 + timeinfo.tm_sec;
     int startM = (minStr == "*") ? 0 : minStr.toInt();
     int startH = (hourStr == "*") ? 0 : hourStr.toInt();
-    long startTotalSec = (long) startH * 3600 + (long) startM * 60;
+    long startTotalSec = (long)startH * 3600 + (long)startM * 60;
 
-    int endM = (eMinStr == "*") ? 59 : eMinStr.toInt();
-    int endH = (eHourStr == "*") ? 23 : eHourStr.toInt();
-    long endTotalSec = (long) endH * 3600 + (long) endM * 60 + 59;
+    if (s.useDuration) {
+        // Если используем длительность: должна совпадать минута начала
+        bool timeMatch = (hourStr == "*" || startH == timeinfo.tm_hour) &&
+                         (minStr == "*" || startM == timeinfo.tm_min);
+        return timeMatch && (timeinfo.tm_sec < s.duration);
+    } else {
+        // Если используем время конца: проверяем вхождение в диапазон
+        int eFirstSpace = s.endCron.indexOf(' ');
+        int eSecondSpace = s.endCron.indexOf(' ', eFirstSpace + 1);
+        int endM = s.endCron.substring(0, eFirstSpace).toInt();
+        int endH = s.endCron.substring(eFirstSpace + 1, eSecondSpace).toInt();
+        long endTotalSec = (long)endH * 3600 + (long)endM * 60 + 59;
 
-    long curTotalSec = (long) curH * 3600 + (long) curM * 60 + curS;
-
-    if (endTotalSec < startTotalSec) {
-        return (curTotalSec >= startTotalSec || curTotalSec < endTotalSec);
+        if (endTotalSec < startTotalSec) { // Переход через полночь
+            return (curTotalSec >= startTotalSec || curTotalSec <= endTotalSec);
+        }
+        return (curTotalSec >= startTotalSec && curTotalSec <= endTotalSec);
     }
-    return (curTotalSec >= startTotalSec && curTotalSec < endTotalSec);
 }
 
 void updateRelaysLogic() {
@@ -520,7 +488,7 @@ void handleRelayAJAX(bool targetState) {
         return;
     }
 
-    int rid = server.arg("rid").toInt() - 1;
+    int rid = server.arg("rid").toInt();
     if (rid < 0 || rid >= 3) {
         server.send(400, "application/json", "{\"status\":\"ERROR\",\"message\":\"Invalid rid\"}");
         return;
@@ -594,22 +562,22 @@ void webHandleRoot() {
 
     // 3. Управление реле
     for (int i = 0; i < RELAY_COUNT; i++) {
-        int rid = i + 1;
-        htmlStr.replace("%RELAY_NAME_" + String(rid) + "%", relays[i]->name);
-        htmlStr.replace("%RELAY_STATE_" + String(rid) + "%", relays[i]->state ? "On" : "Off");
+        String rid = String(i);
+        htmlStr.replace("%RELAY_NAME_" + rid + "%", relays[i]->name);
+        htmlStr.replace("%RELAY_STATE_" + rid + "%", relays[i]->state ? "On" : "Off");
 
         // Режим (Manual/Auto)
         String modeHtml = relays[i]->manualMode
                               ? "<span class='mode-label mode-manual'>Manual</span>"
                               : "<span class='mode-label mode-auto'>Auto</span>";
-        htmlStr.replace("%RELAY_MODE_" + String(rid) + "%", modeHtml);
+        htmlStr.replace("%RELAY_MODE_" + rid + "%", modeHtml);
 
         // Настройка кнопки (динамическое состояние при загрузке)
-        htmlStr.replace("%BTN_CLASS_" + String(rid) + "%", relays[i]->state ? "off" : "on");
-        htmlStr.replace("%BTN_TEXT_" + String(rid) + "%", relays[i]->state ? "ВЫКЛЮЧИТЬ" : "ВКЛЮЧИТЬ");
-        htmlStr.replace("%BTN_ACTION_" + String(rid) + "%", relays[i]->state ? "off" : "on");
+        htmlStr.replace("%BTN_CLASS_" + rid + "%", relays[i]->state ? "off" : "on");
+        htmlStr.replace("%BTN_TEXT_" + rid + "%", relays[i]->state ? "ВЫКЛЮЧИТЬ" : "ВКЛЮЧИТЬ");
+        htmlStr.replace("%BTN_ACTION_" + rid + "%", relays[i]->state ? "off" : "on");
 
-        htmlStr.replace("%SCHEDULES_" + String(rid) + "%", getSchedulesTable(i));
+        htmlStr.replace("%SCHEDULES_" + rid + "%", getSchedulesTable(i));
     }
     server.send(200, "text/html", htmlStr);
 }

@@ -35,7 +35,27 @@
 <h2>⚡ Управление и Расписание</h2>
 
 <div class="relay-card">
-    <h3>%RELAY_NAME_1% (D5)</h3>
+    <h3>%RELAY_NAME_0% (D5)</h3>
+    <p>Статус: <span id="status-0">%RELAY_STATE_0%</span> <span id="mode-0">%RELAY_MODE_0%</span></p>
+    <div class="control-row">
+        <a id="btn-0" href="#" class="button %BTN_CLASS_0%" onclick="toggleRelay(0, '%BTN_ACTION_0%'); return false;">%BTN_TEXT_0%</a>
+        <a href="/add?rid=0" class="button add-btn">📅 + Расписание</a>
+    </div>
+    <table>
+        <thead>
+        <tr>
+            <th>#</th>
+            <th>Старт</th>
+            <th>Конец/Длит.</th>
+            <th>X</th>
+        </tr>
+        </thead>
+        <tbody>%SCHEDULES_0%</tbody>
+    </table>
+</div>
+
+<div class="relay-card">
+    <h3>%RELAY_NAME_1% (D6)</h3>
     <p>Статус: <span id="status-1">%RELAY_STATE_1%</span> <span id="mode-1">%RELAY_MODE_1%</span></p>
     <div class="control-row">
         <a id="btn-1" href="#" class="button %BTN_CLASS_1%" onclick="toggleRelay(1, '%BTN_ACTION_1%'); return false;">%BTN_TEXT_1%</a>
@@ -54,8 +74,8 @@
     </table>
 </div>
 
-<div class="relay-card">
-    <h3>%RELAY_NAME_2% (D6)</h3>
+<div class="relay-card main-pump">
+    <h3>%RELAY_NAME_2% (D7)</h3>
     <p>Статус: <span id="status-2">%RELAY_STATE_2%</span> <span id="mode-2">%RELAY_MODE_2%</span></p>
     <div class="control-row">
         <a id="btn-2" href="#" class="button %BTN_CLASS_2%" onclick="toggleRelay(2, '%BTN_ACTION_2%'); return false;">%BTN_TEXT_2%</a>
@@ -71,26 +91,6 @@
         </tr>
         </thead>
         <tbody>%SCHEDULES_2%</tbody>
-    </table>
-</div>
-
-<div class="relay-card main-pump">
-    <h3>%RELAY_NAME_3% (D7)</h3>
-    <p>Статус: <span id="status-3">%RELAY_STATE_3%</span> <span id="mode-3">%RELAY_MODE_3%</span></p>
-    <div class="control-row">
-        <a id="btn-3" href="#" class="button %BTN_CLASS_3%" onclick="toggleRelay(3, '%BTN_ACTION_3%'); return false;">%BTN_TEXT_3%</a>
-        <a href="/add?rid=3" class="button add-btn">📅 + Расписание</a>
-    </div>
-    <table>
-        <thead>
-        <tr>
-            <th>#</th>
-            <th>Старт</th>
-            <th>Конец/Длит.</th>
-            <th>X</th>
-        </tr>
-        </thead>
-        <tbody>%SCHEDULES_3%</tbody>
     </table>
 </div>
 

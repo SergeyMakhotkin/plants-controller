@@ -1,8 +1,8 @@
-# 🌿 Plants Controller
+#  Plants Controller
 
 An intelligent irrigation and lighting control system based on NodeMCU (ESP8266).
 
-## 🚀 Key Features
+## Key Features
 
 - **3-Channel Control**: 2 channels for lighting, 1 for the pump (with protection).
 - **Advanced Scheduling**: Support for Cron-masks with second-level precision.
@@ -12,7 +12,7 @@ An intelligent irrigation and lighting control system based on NodeMCU (ESP8266)
 
 ---
 
-## 🕹️ Operational Logic
+##  Operational Logic
 
 The system operates in two modes: **Auto** (scheduled) and **Manual** (user-driven).
 
@@ -36,7 +36,7 @@ The system operates in two modes: **Auto** (scheduled) and **Manual** (user-driv
 
 ---
 
-## 🛠️ Installation & Deployment
+## ️ Installation & Deployment
 
 ### 1. Secret Configuration
 
@@ -62,7 +62,7 @@ pio run --target uploadfs
 
 ---
 
-## 🔌 Hardware Pinout
+##  Hardware Pinout
 
 | Component   | NodeMCU Pin | Function                   |
 |-------------|-------------|----------------------------|
@@ -75,7 +75,7 @@ pio run --target uploadfs
 
 ---
 
-## 📝 Schedule Format (Cron)
+##  Schedule Format (Cron)
 
 `MINUTE HOUR DAY MONTH DAY_OF_WEEK`
 Example: `0 12 * * *` — every day at 12:00.
