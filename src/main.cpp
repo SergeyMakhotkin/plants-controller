@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
+#include "connectivity_state.h"
+#include "schedule_logic.h"
 
 // ========== Configuration ==========
 ADC_MODE(ADC_VCC); // for monitoring VCC
@@ -33,22 +35,36 @@ bool bmpAvailable = false;
 
 const unsigned long LEAK_CHECK_INTERVAL = 1000;
 const unsigned long BMP_INTERVAL = 30000;
+// WIFI_RECONNECT_INTERVAL, BOOT_TIMEOUT_MS, WIFI_BEGIN_RETRY_MS, NTP_BOOT_RETRY_MS,
+// NTP_STEADY_RESYNC_MS live in connectivity_state.h alongside the decision logic that uses them.
 
 unsigned long lastSensorRead = 0;
 unsigned long lastLeakCheck = 0;
+unsigned long lastWifiReconnect = 0;
+
+// --- Boot / connectivity state machine ---
+// Decision logic (state transitions, retry/reboot timing) lives in
+// connectivity_state.h as a pure, hardware-free function so it can be
+// unit tested on the host; this is the mutable runtime state it decides over.
+SystemState systemState = SystemState::BOOT_WIFI;
+
+unsigned long bootStartMillis = 0;
+unsigned long lastWifiBeginAttempt = 0;
+int wifiBeginAttempts = 0;
+unsigned long lastNtpAttempt = 0;
+
+bool ntpResyncPending = false;
+unsigned long ntpResyncRequestedAtMillis = 0;
+time_t ntpResyncBaseTime = 0;
 
 float bmpTemperature = 0;
 float bmpPressure = 0;
 bool leakDetected = false;
 
 // --- Data structures ---
-struct Schedule {
-    String startCron;
-    String endCron;
-    int duration = 0;
-    bool useDuration = false;
-};
-
+// Schedule struct + cron parsing/matching (isValidPart, isValidCron,
+// isTimeInSchedule) live in schedule_logic.h so they can be unit tested
+// on-device without pulling in WiFi/LittleFS.
 const int MAX_SCHEDULES = 10;
 
 struct Relay {
@@ -75,10 +91,11 @@ ESP8266WebServer server(webServerPort);
 // Datetime
 struct tm timeinfo;
 time_t lastSyncTime = 0;
+const time_t NTP_VALID_EPOCH = 946684800; // ~2000-01-01, anything before this means NTP hasn't synced yet
 
 bool updateTime() {
     auto now = time(nullptr);
-    if (now < 946684800) return false; // NTP not ready
+    if (now < NTP_VALID_EPOCH) return false; // NTP not ready
 
     // seconds weren't changed
     if (now != lastSyncTime) {
@@ -98,6 +115,7 @@ String getTimestamp() {
 
 // --- Logging ---
 const char *LOG_FILENAME = "/log.txt";
+const char *LOG_EARLY_FILENAME = "/log_early.txt";
 
 void logEvent(const String &message) {
     const String timestamp = getTimestamp();
@@ -112,6 +130,93 @@ void logEvent(const String &message) {
     if (File f = LittleFS.open(LOG_FILENAME, "a")) {
         f.println(logLine);
         f.close();
+    }
+}
+
+// Before the first successful NTP sync there is no wall-clock time to log
+// with, so early boot events are appended (one write per event, no RAM
+// buffering) to a side file with an uptime timestamp instead.
+void logEarlyEvent(const String &message) {
+    const String line = "[UPTIME:" + String(millis()) + "] " + message;
+    Serial.println(line);
+    if (File f = LittleFS.open(LOG_EARLY_FILENAME, "a")) {
+        f.println(line);
+        f.close();
+    }
+}
+
+// Called once, right when time() becomes valid for the first time: replays
+// the uptime-stamped early log into the real log with reconstructed
+// wall-clock timestamps (syncTime - (syncMillis - eventMillis)), then
+// discards the side file.
+void flushEarlyLog() {
+    File early = LittleFS.open(LOG_EARLY_FILENAME, "r");
+    if (early) {
+        const time_t syncTime = time(nullptr);
+        const unsigned long syncMillis = millis();
+        File mainLog = LittleFS.open(LOG_FILENAME, "a");
+
+        while (early.available()) {
+            String line = early.readStringUntil('\n');
+            line.trim();
+            if (line.length() == 0 || !line.startsWith("[UPTIME:")) continue;
+
+            int endIdx = line.indexOf(']');
+            if (endIdx < 0) continue;
+
+            unsigned long eventMillis = line.substring(8, endIdx).toInt();
+            String message = line.substring(endIdx + 1);
+            message.trim();
+
+            unsigned long deltaMs = syncMillis - eventMillis; // safe under millis() wraparound
+            time_t eventTime = syncTime - (time_t)(deltaMs / 1000);
+
+            struct tm eventTm;
+            localtime_r(&eventTime, &eventTm);
+            char buf[25];
+            strftime(buf, sizeof(buf), "[%d.%m.%Y %H:%M:%S] ", &eventTm);
+
+            const String outLine = String(buf) + message;
+            Serial.println(outLine);
+            if (mainLog) mainLog.println(outLine);
+        }
+
+        if (mainLog) mainLog.close();
+        early.close();
+    }
+    LittleFS.remove(LOG_EARLY_FILENAME);
+}
+
+// Fires a forced configTime() and remembers when/from-what baseline, so a
+// later time jump can be recognized as a confirmed resync rather than
+// normal clock advancement (used once already RUNNING/DEGRADED, where
+// time() is already valid and a plain "still valid" check proves nothing).
+void requestNtpResync(const String &reason) {
+    logEvent("SYSTEM: NTP resync requested (" + reason + ")");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    ntpResyncPending = true;
+    ntpResyncRequestedAtMillis = millis();
+    ntpResyncBaseTime = time(nullptr);
+}
+
+// Non-blocking check for the result of a pending forced resync. Only logs
+// a positive confirmation (a real clock jump) - silence just means either
+// the resync hasn't landed yet or it needed no correction, and those two
+// cases can't be told apart from drift alone.
+void checkNtpResyncResult() {
+    if (!ntpResyncPending) return;
+    unsigned long elapsed = millis() - ntpResyncRequestedAtMillis;
+    if (elapsed < 3000) return;
+    if (elapsed > 8000) {
+        ntpResyncPending = false;
+        return;
+    }
+
+    long expectedDelta = (long)(elapsed / 1000);
+    long actualDelta = (long)(time(nullptr) - ntpResyncBaseTime);
+    if (labs(actualDelta - expectedDelta) > 2) {
+        logEvent("SYSTEM: NTP resync confirmed, clock adjusted by " + String(actualDelta - expectedDelta) + "s");
+        ntpResyncPending = false;
     }
 }
 
@@ -273,66 +378,12 @@ void checkLeakSensor() {
 }
 
 // --- Schedule logic ---
+// Cron parsing and the actual date/time matching rules live in
+// schedule_logic.h (isTimeInSchedule) so they're unit tested on-device
+// (test/test_schedule_logic/); this just supplies the live wall clock.
 bool isCurrentTimeInSchedule(const Schedule &s) {
     if (!updateTime()) return false;
-
-    // 1. Сначала проверяем дату (день, месяц, день недели)
-    // Разбор Cron строки (мин час день мес день_нед)
-    int firstSpace = s.startCron.indexOf(' ');
-    int secondSpace = s.startCron.indexOf(' ', firstSpace + 1);
-    int thirdSpace = s.startCron.indexOf(' ', secondSpace + 1);
-    int fourthSpace = s.startCron.indexOf(' ', thirdSpace + 1);
-
-    String minStr = s.startCron.substring(0, firstSpace);
-    String hourStr = s.startCron.substring(firstSpace + 1, secondSpace);
-    String dayStr = s.startCron.substring(secondSpace + 1, thirdSpace);
-    String monthStr = s.startCron.substring(thirdSpace + 1, fourthSpace);
-    String dowStr = s.startCron.substring(fourthSpace + 1);
-
-    // Проверка дня месяца
-    if (dayStr != "*") {
-        if (dayStr.startsWith("*/")) {
-            int interval = dayStr.substring(2).toInt();
-            if (interval > 0 && (timeinfo.tm_mday % interval) != 0) return false;
-        } else if (dayStr.toInt() != timeinfo.tm_mday) return false;
-    }
-    // Проверка месяца
-    if (monthStr != "*") {
-        if (monthStr.startsWith("*/")) {
-            int interval = monthStr.substring(2).toInt();
-            if (interval > 0 && ((timeinfo.tm_mon + 1) % interval) != 0) return false;
-        } else if (monthStr.toInt() != (timeinfo.tm_mon + 1)) return false;
-    }
-    // Проверка дня недели
-    if (dowStr != "*") {
-        int targetDow = (dowStr.toInt() == 7) ? 0 : dowStr.toInt();
-        if (targetDow != timeinfo.tm_wday) return false;
-    }
-
-    // 2. Проверка времени (Часы и Минуты)
-    long curTotalSec = (long)timeinfo.tm_hour * 3600 + (long)timeinfo.tm_min * 60 + timeinfo.tm_sec;
-    int startM = (minStr == "*") ? 0 : minStr.toInt();
-    int startH = (hourStr == "*") ? 0 : hourStr.toInt();
-    long startTotalSec = (long)startH * 3600 + (long)startM * 60;
-
-    if (s.useDuration) {
-        // Если используем длительность: должна совпадать минута начала
-        bool timeMatch = (hourStr == "*" || startH == timeinfo.tm_hour) &&
-                         (minStr == "*" || startM == timeinfo.tm_min);
-        return timeMatch && (timeinfo.tm_sec < s.duration);
-    } else {
-        // Если используем время конца: проверяем вхождение в диапазон
-        int eFirstSpace = s.endCron.indexOf(' ');
-        int eSecondSpace = s.endCron.indexOf(' ', eFirstSpace + 1);
-        int endM = s.endCron.substring(0, eFirstSpace).toInt();
-        int endH = s.endCron.substring(eFirstSpace + 1, eSecondSpace).toInt();
-        long endTotalSec = (long)endH * 3600 + (long)endM * 60 + 59;
-
-        if (endTotalSec < startTotalSec) { // Переход через полночь
-            return (curTotalSec >= startTotalSec || curTotalSec <= endTotalSec);
-        }
-        return (curTotalSec >= startTotalSec && curTotalSec <= endTotalSec);
-    }
+    return isTimeInSchedule(s, timeinfo);
 }
 
 void updateRelaysLogic() {
@@ -365,7 +416,7 @@ void updateRelaysLogic() {
         bool targetState = r->manualMode ? r->state : anyScheduleActive;
 
         // check the protective time interval (isLimited)
-        if (targetState && r->isLimited && r->lastOnTime > 0 && now > 946684800) {
+        if (targetState && r->isLimited && r->lastOnTime > 0 && now > NTP_VALID_EPOCH) {
             if ((now - r->lastOnTime) > relayMaxWorkTimeSec) {
                 targetState = false;
                 r->manualMode = false; // Возврат в авто
@@ -400,57 +451,8 @@ void updateRelaysLogic() {
 }
 
 // --- WEB Handlers ---
-bool isValidPart(String part, int minVal, int maxVal) {
-    part.trim();
-    if (part == "*") return true;
-
-    // Проверка формата */N
-    if (part.startsWith("*/")) {
-        int v = part.substring(2).toInt();
-        return (v > 0 && v <= maxVal);
-    }
-
-    // Проверка конкретного числа N
-    // toInt() вернет 0, если в строке буквы. Проверим, что это реально число.
-    for (char c: part) if (!isDigit(c)) return false;
-
-    int v = part.toInt();
-    return (v >= minVal && v <= maxVal);
-}
-
-bool isValidCron(String str) {
-    str.trim();
-    // Разбиваем строку по пробелам
-    int partsFound = 0;
-    String parts[5];
-
-    int lastSpace = -1;
-    for (int i = 0; i < 5; i++) {
-        int nextSpace = str.indexOf(' ', lastSpace + 1);
-        if (i < 4 && nextSpace == -1) return false; // Нужно 5 частей
-
-        if (i == 4) parts[i] = str.substring(lastSpace + 1);
-        else parts[i] = str.substring(lastSpace + 1, nextSpace);
-
-        parts[i].trim();
-        if (parts[i].length() == 0) return false;
-
-        lastSpace = nextSpace;
-        partsFound++;
-    }
-
-    if (partsFound != 5) return false;
-
-    // Валидация каждого поля согласно логике isCurrentTimeInSchedule
-    if (!isValidPart(parts[0], 0, 59)) return false; // Минуты
-    if (!isValidPart(parts[1], 0, 23)) return false; // Часы
-    if (!isValidPart(parts[2], 1, 31)) return false; // Дни
-    if (!isValidPart(parts[3], 1, 12)) return false; // Месяцы
-    if (!isValidPart(parts[4], 0, 7)) return false; // День недели (0-7)
-
-    return true;
-}
-
+// isValidPart/isValidCron now live in schedule_logic.h alongside the rest of
+// the cron logic (see comment there).
 String getSchedulesTable(int rid) {
     String html = "";
     for (int i = 0; i < relays[rid]->scheduleCount; i++) {
@@ -489,7 +491,7 @@ void handleRelayAJAX(bool targetState) {
     }
 
     int rid = server.arg("rid").toInt();
-    if (rid < 0 || rid >= 3) {
+    if (rid < 0 || rid >= RELAY_COUNT) {
         server.send(400, "application/json", "{\"status\":\"ERROR\",\"message\":\"Invalid rid\"}");
         return;
     }
@@ -811,7 +813,7 @@ void webHandleScheduleDel() {
     if (!checkAuth()) return;
     int rid = server.arg("rid").toInt();
     int id = server.arg("id").toInt();
-    if (rid >= 0 && rid < 3 && id < relays[rid]->scheduleCount) {
+    if (rid >= 0 && rid < RELAY_COUNT && id < relays[rid]->scheduleCount) {
         for (int i = id; i < relays[rid]->scheduleCount - 1; i++)
             relays[rid]->schedules[i] = relays[rid]->schedules[i + 1];
         relays[rid]->scheduleCount--;
@@ -853,33 +855,18 @@ void setup() {
         Serial.println("BMP280 not found");
     }
 
+    // WiFi/NTP acquisition happens in loop() via the state machine below,
+    // so a router/ISP that isn't up yet after a power outage can never hang
+    // setup() - relays stay OFF (already set above) until schedules can run.
     WiFi.mode(WIFI_STA);
     WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
-    Serial.print("Connecting to WiFi");
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-        yield();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi Connected. IP: " + WiFi.localIP().toString());
-        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-        Serial.print("Waiting for NTP time sync");
-        int timeRetry = 0;
-        while (time(nullptr) < 946684800 && timeRetry < 20) {
-            delay(500);
-            Serial.print(".");
-            timeRetry++;
-        }
-        Serial.println("\n\nNTP client initialized");
-        logEvent("SYSTEM: Boot. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
-    } else {
-        Serial.println("\nWiFi connection failed!");
-    }
+    bootStartMillis = millis();
+    lastWifiBeginAttempt = bootStartMillis;
+    wifiBeginAttempts = 1;
+    LittleFS.remove(LOG_EARLY_FILENAME); // discard any leftover from an incomplete previous boot
+    logEarlyEvent("SYSTEM: Boot started. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
+    logEarlyEvent("SYSTEM: WiFi.begin() attempt #1");
 
     // web server configuration
     server.on("/", webHandleRoot);
@@ -895,13 +882,102 @@ void setup() {
 
     server.begin();
     Serial.println("HTTP server started");
-    logEvent("SYSTEM: HTTP server started");
+    logEarlyEvent("SYSTEM: HTTP server started");
+}
 
-    logEvent("SYSTEM: Boot complete, FW=" + String(VERSION));
+// Drives BOOT_WIFI -> BOOT_NTP -> RUNNING <-> DEGRADED. Runs every loop()
+// tick, never blocks. Reads live inputs, hands them to the pure
+// decideConnectivityAction() (connectivity_state.h, unit tested separately),
+// then performs whatever it decided - this file only does I/O, no policy.
+void updateConnectivityState() {
+    unsigned long nowMs = millis();
+    bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+    bool timeValid = updateTime();
+    SystemState prevState = systemState;
+
+    ConnectivityDecision d = decideConnectivityAction(
+        systemState, wifiConnected, timeValid, nowMs,
+        bootStartMillis, lastWifiBeginAttempt, lastNtpAttempt, lastWifiReconnect);
+
+    systemState = d.nextState;
+
+    if (d.doReboot) {
+        const char *waitingFor = (prevState == SystemState::BOOT_WIFI) ? "WiFi" : "NTP";
+        logEarlyEvent(String("SYSTEM: Boot timeout waiting for ") + waitingFor + ", rebooting");
+        delay(100);
+        ESP.restart();
+        return;
+    }
+
+    switch (d.wifiBegin) {
+        case WifiBeginReason::RETRY:
+            lastWifiBeginAttempt = nowMs;
+            wifiBeginAttempts++;
+            logEarlyEvent("SYSTEM: WiFi.begin() attempt #" + String(wifiBeginAttempts));
+            WiFi.begin(WIFI_SSID, WIFI_PASS);
+            break;
+        case WifiBeginReason::RELINK_AFTER_NTP_BOOT_DROP:
+            lastWifiBeginAttempt = nowMs;
+            wifiBeginAttempts++;
+            logEarlyEvent("SYSTEM: WiFi lost before NTP sync, retrying WiFi");
+            WiFi.begin(WIFI_SSID, WIFI_PASS);
+            break;
+        default:
+            break;
+    }
+
+    if (d.enteredBootNtp) {
+        logEarlyEvent("SYSTEM: WiFi connected. IP=" + WiFi.localIP().toString());
+    }
+
+    switch (d.ntpRequest) {
+        case NtpRequestReason::INITIAL:
+            lastNtpAttempt = nowMs;
+            logEarlyEvent("SYSTEM: NTP sync requested");
+            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            break;
+        case NtpRequestReason::BOOT_RETRY:
+            lastNtpAttempt = nowMs;
+            logEarlyEvent("SYSTEM: NTP sync retry");
+            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            break;
+        case NtpRequestReason::PERIODIC:
+            lastNtpAttempt = nowMs;
+            requestNtpResync("periodic");
+            break;
+        case NtpRequestReason::AFTER_RECONNECT:
+            lastNtpAttempt = nowMs;
+            requestNtpResync("after reconnect");
+            break;
+        default:
+            break;
+    }
+
+    if (d.enteredRunning) {
+        flushEarlyLog();
+        logEvent("SYSTEM: NTP synced, boot complete. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
+    }
+    if (d.enteredDegraded) {
+        logEvent("SYSTEM: WiFi link lost, schedule continues on local clock");
+    }
+    if (d.exitedDegraded) {
+        logEvent("SYSTEM: WiFi link restored. IP=" + WiFi.localIP().toString());
+    }
+    if (d.doWifiReconnect) {
+        lastWifiReconnect = nowMs;
+        logEvent("SYSTEM: WiFi reconnect attempt");
+        WiFi.reconnect();
+    }
+
+    if (systemState == SystemState::RUNNING) {
+        checkNtpResyncResult();
+    }
 }
 
 void loop() {
     server.handleClient();
+
+    updateConnectivityState();
     updateRelaysLogic();
 
     unsigned long currentMillis = millis();
