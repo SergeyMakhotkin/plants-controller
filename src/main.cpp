@@ -24,11 +24,38 @@ int relayMaxWorkTimeSec = 10;
 const int LEAK_SENSOR_PIN = D8;
 
 // --- Network Settings ---
-IPAddress local_IP(IP_LOCAL);
-IPAddress gateway(IP_GATEWAY);
-IPAddress subnet(IP_SUBNET);
-IPAddress primaryDNS(IP_DNS_PRIMARY);
-IPAddress secondaryDNS(IP_DNS_SECONDARY);
+// Compiled-in defaults from secrets.ini. Mutable (not const): loadWifiConfig()
+// overrides these at boot if /wifi_config.json exists (saved via the WiFi
+// setup portal, see runWifiSetupPortal()) - otherwise these compiled values
+// are used exactly as before.
+String activeWifiSsid = WIFI_SSID;
+String activeWifiPass = WIFI_PASS;
+IPAddress activeLocalIP(IP_LOCAL);
+IPAddress activeGateway(IP_GATEWAY);
+IPAddress activeSubnet(IP_SUBNET);
+IPAddress activePrimaryDNS(IP_DNS_PRIMARY);
+IPAddress activeSecondaryDNS(IP_DNS_SECONDARY);
+
+const char *WIFI_CONFIG_FILENAME = "/wifi_config.json";
+const int WIFI_SETUP_BUTTON_PIN = D3; // GPIO0, onboard FLASH button
+const unsigned long WIFI_SETUP_TRIGGER_WINDOW_MS = 3000;
+const unsigned long WIFI_SETUP_HOLD_REQUIRED_MS = 1000;
+const char *WIFI_SETUP_AP_SSID = "PlantsController-Setup";
+
+// --- Status LED ---
+// Onboard LED (GPIO2/D4), active-LOW like every NodeMCU board. RUNNING is
+// solid on ("everything's fine"); AP setup mode is a slow symmetric blink;
+// every other state blinks its mode number as short pulses within a 1s
+// cycle, then pauses for the rest of the second - e.g. mode 2 -> ON 100ms,
+// OFF 100ms, ON 100ms, OFF 700ms, repeat. Doubles as a simple blink-count
+// status code readable without a serial monitor.
+const int STATUS_LED_PIN = LED_BUILTIN;
+const unsigned long LED_PULSE_CYCLE_MS = 1000; // total length of one pulsed pattern cycle
+const unsigned long LED_PULSE_UNIT_MS = 100;   // each pulse/gap is one unit long
+const unsigned long LED_PERIOD_SETUP_AP_MS = 2000; // slow symmetric blink - WiFi setup AP mode
+
+unsigned long ledLastToggleMs = 0;
+bool ledOn = false;
 
 Adafruit_BMP280 bmp;
 bool bmpAvailable = false;
@@ -355,6 +382,41 @@ void loadConfig() {
         Serial.println("ERROR: Failed to parse config JSON");
     }
     f.close();
+}
+
+// Overrides the active* WiFi/IP globals from a config saved by
+// runWifiSetupPortal(). If the file doesn't exist (never configured through
+// the portal) or fails to parse, the compiled secrets.ini defaults set at
+// global scope above are left untouched.
+void loadWifiConfig() {
+    if (!LittleFS.exists(WIFI_CONFIG_FILENAME)) return;
+
+    File f = LittleFS.open(WIFI_CONFIG_FILENAME, "r");
+    if (!f) return;
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, f);
+    f.close();
+    if (error) {
+        Serial.println("ERROR: Failed to parse wifi_config.json, using compiled defaults");
+        return;
+    }
+
+    activeWifiSsid = doc["ssid"] | activeWifiSsid;
+    activeWifiPass = doc["pass"] | activeWifiPass;
+
+    String ip = doc["ip"] | "";
+    String gw = doc["gateway"] | "";
+    String sn = doc["subnet"] | "";
+    String d1 = doc["dns1"] | "";
+    String d2 = doc["dns2"] | "";
+    if (ip.length()) activeLocalIP.fromString(ip);
+    if (gw.length()) activeGateway.fromString(gw);
+    if (sn.length()) activeSubnet.fromString(sn);
+    if (d1.length()) activePrimaryDNS.fromString(d1);
+    if (d2.length()) activeSecondaryDNS.fromString(d2);
+
+    Serial.println("Loaded WiFi config from " + String(WIFI_CONFIG_FILENAME));
 }
 
 // --- Sensors ---
@@ -823,6 +885,167 @@ void webHandleScheduleDel() {
     server.send(303);
 }
 
+// --- Status LED ---
+void setStatusLed(bool on) {
+    digitalWrite(STATUS_LED_PIN, on ? LOW : HIGH); // active-low
+}
+
+// pulseCount == 0 -> solid on. Otherwise repeats every LED_PULSE_CYCLE_MS:
+// pulseCount short ON pulses separated by short gaps, then OFF for the rest
+// of the cycle - e.g. pulseCount=2 -> ON,OFF,ON,long-OFF. Non-blocking,
+// derives on/off purely from millis() (wraparound-safe, self-resyncing),
+// only writes the pin when the state actually needs to change.
+void updateStatusLedPulses(int pulseCount) {
+    if (pulseCount <= 0) {
+        if (!ledOn) {
+            ledOn = true;
+            setStatusLed(true);
+        }
+        return;
+    }
+
+    unsigned long elapsed = millis() % LED_PULSE_CYCLE_MS;
+    unsigned long activeSpan = (unsigned long) (2 * pulseCount - 1) * LED_PULSE_UNIT_MS;
+    bool shouldBeOn = (elapsed < activeSpan) && ((elapsed / LED_PULSE_UNIT_MS) % 2 == 0);
+
+    if (shouldBeOn != ledOn) {
+        ledOn = shouldBeOn;
+        setStatusLed(ledOn);
+    }
+}
+
+// Non-blocking symmetric blink at the given full on/off period - used only
+// for WiFi setup AP mode, which isn't a SystemState and keeps its original
+// simple slow blink rather than the pulse-count scheme above.
+void updateStatusLedBlink(unsigned long periodMs) {
+    unsigned long now = millis();
+    if (now - ledLastToggleMs >= periodMs / 2) {
+        ledLastToggleMs = now;
+        ledOn = !ledOn;
+        setStatusLed(ledOn);
+    }
+}
+
+int ledPulseCountForState(SystemState s) {
+    switch (s) {
+        case SystemState::BOOT_WIFI: return 1;
+        case SystemState::BOOT_NTP: return 2;
+        case SystemState::DEGRADED: return 3;
+        case SystemState::RUNNING: default: return 0; // solid on
+    }
+}
+
+// --- WiFi setup portal (AP config mode) ---
+// GPIO0 can't be read at the exact reset instant - the ESP8266 ROM bootloader
+// samples it right then to decide UART-flash-mode vs run-mode, so holding it
+// LOW from power-on sends the chip into the flasher instead of the sketch.
+// This checks it a few seconds INTO setup() instead: boot proceeds normally,
+// and holding the onboard FLASH button (GPIO0/D3) for >=1s within the first
+// 3s after this point is read as "enter WiFi setup mode".
+bool checkWifiSetupTrigger() {
+    pinMode(WIFI_SETUP_BUTTON_PIN, INPUT_PULLUP);
+    Serial.println("Hold FLASH button now for WiFi setup mode...");
+
+    unsigned long windowStart = millis();
+    unsigned long lastHighAt = windowStart;
+
+    while (millis() - windowStart < WIFI_SETUP_TRIGGER_WINDOW_MS) {
+        updateStatusLedPulses(ledPulseCountForState(SystemState::BOOT_WIFI)); // blinking already during the button-check window
+        if (digitalRead(WIFI_SETUP_BUTTON_PIN) == HIGH) {
+            lastHighAt = millis();
+        } else if (millis() - lastHighAt >= WIFI_SETUP_HOLD_REQUIRED_MS) {
+            return true;
+        }
+        delay(20);
+    }
+    return false;
+}
+
+ESP8266WebServer setupServer(80);
+
+void wifiSetupHandleRoot() {
+    File f = LittleFS.open("/wifi_setup.html", "r");
+    if (!f) {
+        setupServer.send(500, "text/plain", "wifi_setup.html not found - did you run uploadfs?");
+        return;
+    }
+    String html = f.readString();
+    f.close();
+
+    html.replace("%SSID%", activeWifiSsid);
+    html.replace("%IP%", activeLocalIP.toString());
+    html.replace("%GATEWAY%", activeGateway.toString());
+    html.replace("%SUBNET%", activeSubnet.toString());
+    html.replace("%DNS1%", activePrimaryDNS.toString());
+    html.replace("%DNS2%", activeSecondaryDNS.toString());
+    html.replace("%ERROR%", "");
+
+    setupServer.send(200, "text/html", html);
+}
+
+void wifiSetupHandleSave() {
+    String ssid = setupServer.arg("ssid");
+    String pass = setupServer.arg("pass");
+    String ip = setupServer.arg("ip");
+    String gw = setupServer.arg("gateway");
+    String sn = setupServer.arg("subnet");
+    String d1 = setupServer.arg("dns1");
+    String d2 = setupServer.arg("dns2");
+
+    IPAddress ipCheck, gwCheck, snCheck, d1Check, d2Check;
+    bool valid = ssid.length() > 0
+                 && ipCheck.fromString(ip) && gwCheck.fromString(gw) && snCheck.fromString(sn)
+                 && d1Check.fromString(d1) && d2Check.fromString(d2);
+
+    if (!valid) {
+        setupServer.send(400, "text/plain", "Invalid input - go back and check the SSID/IP fields");
+        return;
+    }
+
+    JsonDocument doc;
+    doc["ssid"] = ssid;
+    // Blank password field means "keep the currently saved one" rather than wiping it -
+    // avoids ever having to echo the plaintext password back into the form to preserve it.
+    doc["pass"] = pass.length() > 0 ? pass : activeWifiPass;
+    doc["ip"] = ip;
+    doc["gateway"] = gw;
+    doc["subnet"] = sn;
+    doc["dns1"] = d1;
+    doc["dns2"] = d2;
+
+    File f = LittleFS.open(WIFI_CONFIG_FILENAME, "w");
+    if (f) {
+        serializeJson(doc, f);
+        f.close();
+    }
+
+    setupServer.send(200, "text/html", "<html><body><h2>Saved. Rebooting...</h2></body></html>");
+    delay(500);
+    ESP.restart();
+}
+
+// Takes over completely: raises an open SoftAP, serves the config form, and
+// reboots once saved. Never returns to the caller. Deliberately independent
+// of connectivity_state.h's state machine and the normal `server`/`loop()` -
+// nothing else needs to run while this is active, and relays are already OFF.
+void runWifiSetupPortal() {
+    Serial.println("=== WiFi Setup Mode ===");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(WIFI_SETUP_AP_SSID);
+    Serial.println("AP SSID: " + String(WIFI_SETUP_AP_SSID));
+    Serial.println("AP IP: " + WiFi.softAPIP().toString());
+
+    setupServer.on("/", HTTP_GET, wifiSetupHandleRoot);
+    setupServer.on("/save", HTTP_POST, wifiSetupHandleSave);
+    setupServer.begin();
+
+    while (true) {
+        setupServer.handleClient();
+        updateStatusLedBlink(LED_PERIOD_SETUP_AP_MS);
+        delay(10);
+    }
+}
+
 // --- Setup и Loop ---
 void setup() {
     Serial.begin(115200);
@@ -839,12 +1062,18 @@ void setup() {
     }
 
     loadConfig();
+    loadWifiConfig();
 
     for (int i = 0; i < 3; i++) {
         pinMode(relays[i]->pin, OUTPUT);
         digitalWrite(relays[i]->pin, HIGH);
     }
     pinMode(LEAK_SENSOR_PIN, INPUT_PULLUP);
+    pinMode(STATUS_LED_PIN, OUTPUT);
+
+    if (checkWifiSetupTrigger()) {
+        runWifiSetupPortal(); // never returns - ends in ESP.restart()
+    }
 
     // Init BMP280
     Wire.begin();
@@ -859,8 +1088,8 @@ void setup() {
     // so a router/ISP that isn't up yet after a power outage can never hang
     // setup() - relays stay OFF (already set above) until schedules can run.
     WiFi.mode(WIFI_STA);
-    WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.config(activeLocalIP, activeGateway, activeSubnet, activePrimaryDNS, activeSecondaryDNS);
+    WiFi.begin(activeWifiSsid, activeWifiPass);
     bootStartMillis = millis();
     lastWifiBeginAttempt = bootStartMillis;
     wifiBeginAttempts = 1;
@@ -914,13 +1143,13 @@ void updateConnectivityState() {
             lastWifiBeginAttempt = nowMs;
             wifiBeginAttempts++;
             logEarlyEvent("SYSTEM: WiFi.begin() attempt #" + String(wifiBeginAttempts));
-            WiFi.begin(WIFI_SSID, WIFI_PASS);
+            WiFi.begin(activeWifiSsid, activeWifiPass);
             break;
         case WifiBeginReason::RELINK_AFTER_NTP_BOOT_DROP:
             lastWifiBeginAttempt = nowMs;
             wifiBeginAttempts++;
             logEarlyEvent("SYSTEM: WiFi lost before NTP sync, retrying WiFi");
-            WiFi.begin(WIFI_SSID, WIFI_PASS);
+            WiFi.begin(activeWifiSsid, activeWifiPass);
             break;
         default:
             break;
@@ -978,6 +1207,7 @@ void loop() {
     server.handleClient();
 
     updateConnectivityState();
+    updateStatusLedPulses(ledPulseCountForState(systemState));
     updateRelaysLogic();
 
     unsigned long currentMillis = millis();

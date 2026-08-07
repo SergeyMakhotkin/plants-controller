@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>WiFi Setup</title>
+    <link rel="stylesheet" href="/style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<div class="form-container">
+    <h2>📡 WiFi Setup</h2>
+    <p>Connected to the controller's own temporary network. Enter your home WiFi details below — the controller
+        will save them and reboot into normal mode.</p>
+
+    <form action="/save" method="POST">
+        <div class="form-group">
+            <strong>WiFi SSID:</strong>
+            <input type="text" name="ssid" value="%SSID%" required>
+        </div>
+
+        <div class="form-group">
+            <strong>WiFi Password:</strong>
+            <input type="password" name="pass" placeholder="leave blank to keep current password">
+        </div>
+
+        <div class="form-group">
+            <strong>Static IP:</strong>
+            <input type="text" name="ip" value="%IP%" required>
+        </div>
+
+        <div class="form-group">
+            <strong>Gateway:</strong>
+            <input type="text" name="gateway" value="%GATEWAY%" required>
+        </div>
+
+        <div class="form-group">
+            <strong>Subnet:</strong>
+            <input type="text" name="subnet" value="%SUBNET%" required>
+        </div>
+
+        <div class="form-group">
+            <strong>DNS 1:</strong>
+            <input type="text" name="dns1" value="%DNS1%" required>
+        </div>
+
+        <div class="form-group">
+            <strong>DNS 2:</strong>
+            <input type="text" name="dns2" value="%DNS2%" required>
+        </div>
+
+        <p style="color:red;">%ERROR%</p>
+
+        <input type="submit" value="Save and Reboot">
+    </form>
+</div>
+</body>
+</html>

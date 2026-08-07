@@ -47,6 +47,37 @@ Designed to recover cleanly from a power outage, where the router/ISP may take a
   seconds in the background, but relays keep following the schedule off the local clock the whole time — no reboot,
   no interruption. If the link stays up but the internet/NTP server doesn't, the clock is force-resynced every hour.
 
+**Status LED** (onboard LED, D4) shows the current state at a glance, no serial monitor needed. Each state blinks
+its own count of short pulses once a second (e.g. 2 short blinks, pause, repeat), so it doubles as a status code:
+
+| What you see                              | Meaning                                  |
+|---------------------------------------------|-------------------------------------------|
+| 1 short blink/sec                            | Booting, waiting for WiFi                  |
+| 2 short blinks/sec                           | WiFi connected, waiting for time sync      |
+| Solid on                                     | Running normally                           |
+| 3 short blinks/sec                           | WiFi/internet lost — still running schedules off the local clock |
+| Slow, even blink (~0.5 Hz, no pulse-counting)| WiFi setup AP mode                         |
+
+---
+
+## WiFi Setup Without Reflashing
+
+WiFi credentials and static IP normally come from `secrets.ini` at compile time, but they can also be changed live,
+without touching a USB cable:
+
+1. Power on the controller (or reset it), then within the first ~3 seconds, press and hold the onboard **FLASH**
+   button for about a second. (Don't hold it *while* powering on — GPIO0 has to be free at the exact moment of
+   reset, or the chip enters its own bootloader instead of your firmware.)
+2. The controller raises its own open WiFi network, `PlantsController-Setup`. Connect to it from a phone or laptop.
+3. Open `http://192.168.4.1` in a browser — a form to set SSID, password, and static IP (address/gateway/subnet/DNS)
+   appears, pre-filled with whatever is currently active.
+4. Submit it. The controller saves the settings to LittleFS and reboots into normal mode, connecting to the new
+   network.
+
+If it's never been configured this way, the compiled `secrets.ini` values are used exactly as before — this is
+purely additive. This feature needs the new `data/wifi_setup.html` template on the device, so deploying it requires
+both `pio run --target upload` **and** `pio run --target uploadfs`.
+
 ---
 
 ## ️ Installation & Deployment
@@ -94,6 +125,7 @@ pio run --target uploadfs
 | I2C SDA     | D2          | BMP280 Data                |
 | I2C SCL     | D1          | BMP280 Clock               |
 | Leak Sensor | D8          | Digital Input (Active LOW) |
+| Setup Button | D3 (GPIO0) | Onboard FLASH button — hold to enter WiFi setup mode |
 
 ---
 
