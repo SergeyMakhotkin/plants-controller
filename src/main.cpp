@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_BMP280.h>
+#include "connectivity_state.h"
+#include "schedule_logic.h"
 
 // ========== Configuration ==========
 ADC_MODE(ADC_VCC); // for monitoring VCC
@@ -22,33 +24,74 @@ int relayMaxWorkTimeSec = 10;
 const int LEAK_SENSOR_PIN = D8;
 
 // --- Network Settings ---
-IPAddress local_IP(IP_LOCAL);
-IPAddress gateway(IP_GATEWAY);
-IPAddress subnet(IP_SUBNET);
-IPAddress primaryDNS(IP_DNS_PRIMARY);
-IPAddress secondaryDNS(IP_DNS_SECONDARY);
+// Compiled-in defaults from secrets.ini. Mutable (not const): loadWifiConfig()
+// overrides these at boot if /wifi_config.json exists (saved via the WiFi
+// setup portal, see runWifiSetupPortal()) - otherwise these compiled values
+// are used exactly as before.
+String activeWifiSsid = WIFI_SSID;
+String activeWifiPass = WIFI_PASS;
+IPAddress activeLocalIP(IP_LOCAL);
+IPAddress activeGateway(IP_GATEWAY);
+IPAddress activeSubnet(IP_SUBNET);
+IPAddress activePrimaryDNS(IP_DNS_PRIMARY);
+IPAddress activeSecondaryDNS(IP_DNS_SECONDARY);
+
+const char *WIFI_CONFIG_FILENAME = "/wifi_config.json";
+const int WIFI_SETUP_BUTTON_PIN = D3; // GPIO0, onboard FLASH button
+const unsigned long WIFI_SETUP_TRIGGER_WINDOW_MS = 3000;
+const unsigned long WIFI_SETUP_HOLD_REQUIRED_MS = 1000;
+const char *WIFI_SETUP_AP_SSID = "PlantsController-Setup";
+
+// --- Status LED ---
+// Onboard LED (GPIO2/D4), active-LOW like every NodeMCU board. RUNNING is
+// solid on ("everything's fine"); AP setup mode is a slow symmetric blink;
+// every other state blinks its mode number as short pulses within a 1s
+// cycle, then pauses for the rest of the second - e.g. mode 2 -> ON 100ms,
+// OFF 100ms, ON 100ms, OFF 700ms, repeat. Doubles as a simple blink-count
+// status code readable without a serial monitor.
+const int STATUS_LED_PIN = LED_BUILTIN;
+const unsigned long LED_PULSE_CYCLE_MS = 1000; // total length of one pulsed pattern cycle
+const unsigned long LED_PULSE_UNIT_MS = 100;   // each pulse/gap is one unit long
+const unsigned long LED_PERIOD_SETUP_AP_MS = 2000; // slow symmetric blink - WiFi setup AP mode
+
+unsigned long ledLastToggleMs = 0;
+bool ledOn = false;
 
 Adafruit_BMP280 bmp;
 bool bmpAvailable = false;
 
 const unsigned long LEAK_CHECK_INTERVAL = 1000;
 const unsigned long BMP_INTERVAL = 30000;
+// WIFI_RECONNECT_INTERVAL, BOOT_TIMEOUT_MS, WIFI_BEGIN_RETRY_MS, NTP_BOOT_RETRY_MS,
+// NTP_STEADY_RESYNC_MS live in connectivity_state.h alongside the decision logic that uses them.
 
 unsigned long lastSensorRead = 0;
 unsigned long lastLeakCheck = 0;
+unsigned long lastWifiReconnect = 0;
+
+// --- Boot / connectivity state machine ---
+// Decision logic (state transitions, retry/reboot timing) lives in
+// connectivity_state.h as a pure, hardware-free function so it can be
+// unit tested on the host; this is the mutable runtime state it decides over.
+SystemState systemState = SystemState::BOOT_WIFI;
+
+unsigned long bootStartMillis = 0;
+unsigned long lastWifiBeginAttempt = 0;
+int wifiBeginAttempts = 0;
+unsigned long lastNtpAttempt = 0;
+
+bool ntpResyncPending = false;
+unsigned long ntpResyncRequestedAtMillis = 0;
+time_t ntpResyncBaseTime = 0;
 
 float bmpTemperature = 0;
 float bmpPressure = 0;
 bool leakDetected = false;
 
 // --- Data structures ---
-struct Schedule {
-    String startCron;
-    String endCron;
-    int duration = 0;
-    bool useDuration = false;
-};
-
+// Schedule struct + cron parsing/matching (isValidPart, isValidCron,
+// isTimeInSchedule) live in schedule_logic.h so they can be unit tested
+// on-device without pulling in WiFi/LittleFS.
 const int MAX_SCHEDULES = 10;
 
 struct Relay {
@@ -75,10 +118,11 @@ ESP8266WebServer server(webServerPort);
 // Datetime
 struct tm timeinfo;
 time_t lastSyncTime = 0;
+const time_t NTP_VALID_EPOCH = 946684800; // ~2000-01-01, anything before this means NTP hasn't synced yet
 
 bool updateTime() {
     auto now = time(nullptr);
-    if (now < 946684800) return false; // NTP not ready
+    if (now < NTP_VALID_EPOCH) return false; // NTP not ready
 
     // seconds weren't changed
     if (now != lastSyncTime) {
@@ -98,6 +142,7 @@ String getTimestamp() {
 
 // --- Logging ---
 const char *LOG_FILENAME = "/log.txt";
+const char *LOG_EARLY_FILENAME = "/log_early.txt";
 
 void logEvent(const String &message) {
     const String timestamp = getTimestamp();
@@ -112,6 +157,93 @@ void logEvent(const String &message) {
     if (File f = LittleFS.open(LOG_FILENAME, "a")) {
         f.println(logLine);
         f.close();
+    }
+}
+
+// Before the first successful NTP sync there is no wall-clock time to log
+// with, so early boot events are appended (one write per event, no RAM
+// buffering) to a side file with an uptime timestamp instead.
+void logEarlyEvent(const String &message) {
+    const String line = "[UPTIME:" + String(millis()) + "] " + message;
+    Serial.println(line);
+    if (File f = LittleFS.open(LOG_EARLY_FILENAME, "a")) {
+        f.println(line);
+        f.close();
+    }
+}
+
+// Called once, right when time() becomes valid for the first time: replays
+// the uptime-stamped early log into the real log with reconstructed
+// wall-clock timestamps (syncTime - (syncMillis - eventMillis)), then
+// discards the side file.
+void flushEarlyLog() {
+    File early = LittleFS.open(LOG_EARLY_FILENAME, "r");
+    if (early) {
+        const time_t syncTime = time(nullptr);
+        const unsigned long syncMillis = millis();
+        File mainLog = LittleFS.open(LOG_FILENAME, "a");
+
+        while (early.available()) {
+            String line = early.readStringUntil('\n');
+            line.trim();
+            if (line.length() == 0 || !line.startsWith("[UPTIME:")) continue;
+
+            int endIdx = line.indexOf(']');
+            if (endIdx < 0) continue;
+
+            unsigned long eventMillis = line.substring(8, endIdx).toInt();
+            String message = line.substring(endIdx + 1);
+            message.trim();
+
+            unsigned long deltaMs = syncMillis - eventMillis; // safe under millis() wraparound
+            time_t eventTime = syncTime - (time_t)(deltaMs / 1000);
+
+            struct tm eventTm;
+            localtime_r(&eventTime, &eventTm);
+            char buf[25];
+            strftime(buf, sizeof(buf), "[%d.%m.%Y %H:%M:%S] ", &eventTm);
+
+            const String outLine = String(buf) + message;
+            Serial.println(outLine);
+            if (mainLog) mainLog.println(outLine);
+        }
+
+        if (mainLog) mainLog.close();
+        early.close();
+    }
+    LittleFS.remove(LOG_EARLY_FILENAME);
+}
+
+// Fires a forced configTime() and remembers when/from-what baseline, so a
+// later time jump can be recognized as a confirmed resync rather than
+// normal clock advancement (used once already RUNNING/DEGRADED, where
+// time() is already valid and a plain "still valid" check proves nothing).
+void requestNtpResync(const String &reason) {
+    logEvent("SYSTEM: NTP resync requested (" + reason + ")");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    ntpResyncPending = true;
+    ntpResyncRequestedAtMillis = millis();
+    ntpResyncBaseTime = time(nullptr);
+}
+
+// Non-blocking check for the result of a pending forced resync. Only logs
+// a positive confirmation (a real clock jump) - silence just means either
+// the resync hasn't landed yet or it needed no correction, and those two
+// cases can't be told apart from drift alone.
+void checkNtpResyncResult() {
+    if (!ntpResyncPending) return;
+    unsigned long elapsed = millis() - ntpResyncRequestedAtMillis;
+    if (elapsed < 3000) return;
+    if (elapsed > 8000) {
+        ntpResyncPending = false;
+        return;
+    }
+
+    long expectedDelta = (long)(elapsed / 1000);
+    long actualDelta = (long)(time(nullptr) - ntpResyncBaseTime);
+    if (labs(actualDelta - expectedDelta) > 2) {
+        logEvent("SYSTEM: NTP resync confirmed, clock adjusted by " + String(actualDelta - expectedDelta) + "s");
+        ntpResyncPending = false;
     }
 }
 
@@ -252,6 +384,41 @@ void loadConfig() {
     f.close();
 }
 
+// Overrides the active* WiFi/IP globals from a config saved by
+// runWifiSetupPortal(). If the file doesn't exist (never configured through
+// the portal) or fails to parse, the compiled secrets.ini defaults set at
+// global scope above are left untouched.
+void loadWifiConfig() {
+    if (!LittleFS.exists(WIFI_CONFIG_FILENAME)) return;
+
+    File f = LittleFS.open(WIFI_CONFIG_FILENAME, "r");
+    if (!f) return;
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, f);
+    f.close();
+    if (error) {
+        Serial.println("ERROR: Failed to parse wifi_config.json, using compiled defaults");
+        return;
+    }
+
+    activeWifiSsid = doc["ssid"] | activeWifiSsid;
+    activeWifiPass = doc["pass"] | activeWifiPass;
+
+    String ip = doc["ip"] | "";
+    String gw = doc["gateway"] | "";
+    String sn = doc["subnet"] | "";
+    String d1 = doc["dns1"] | "";
+    String d2 = doc["dns2"] | "";
+    if (ip.length()) activeLocalIP.fromString(ip);
+    if (gw.length()) activeGateway.fromString(gw);
+    if (sn.length()) activeSubnet.fromString(sn);
+    if (d1.length()) activePrimaryDNS.fromString(d1);
+    if (d2.length()) activeSecondaryDNS.fromString(d2);
+
+    Serial.println("Loaded WiFi config from " + String(WIFI_CONFIG_FILENAME));
+}
+
 // --- Sensors ---
 void readBMPData() {
     if (!bmpEnabled) return;
@@ -273,66 +440,12 @@ void checkLeakSensor() {
 }
 
 // --- Schedule logic ---
+// Cron parsing and the actual date/time matching rules live in
+// schedule_logic.h (isTimeInSchedule) so they're unit tested on-device
+// (test/test_schedule_logic/); this just supplies the live wall clock.
 bool isCurrentTimeInSchedule(const Schedule &s) {
     if (!updateTime()) return false;
-
-    // 1. Сначала проверяем дату (день, месяц, день недели)
-    // Разбор Cron строки (мин час день мес день_нед)
-    int firstSpace = s.startCron.indexOf(' ');
-    int secondSpace = s.startCron.indexOf(' ', firstSpace + 1);
-    int thirdSpace = s.startCron.indexOf(' ', secondSpace + 1);
-    int fourthSpace = s.startCron.indexOf(' ', thirdSpace + 1);
-
-    String minStr = s.startCron.substring(0, firstSpace);
-    String hourStr = s.startCron.substring(firstSpace + 1, secondSpace);
-    String dayStr = s.startCron.substring(secondSpace + 1, thirdSpace);
-    String monthStr = s.startCron.substring(thirdSpace + 1, fourthSpace);
-    String dowStr = s.startCron.substring(fourthSpace + 1);
-
-    // Проверка дня месяца
-    if (dayStr != "*") {
-        if (dayStr.startsWith("*/")) {
-            int interval = dayStr.substring(2).toInt();
-            if (interval > 0 && (timeinfo.tm_mday % interval) != 0) return false;
-        } else if (dayStr.toInt() != timeinfo.tm_mday) return false;
-    }
-    // Проверка месяца
-    if (monthStr != "*") {
-        if (monthStr.startsWith("*/")) {
-            int interval = monthStr.substring(2).toInt();
-            if (interval > 0 && ((timeinfo.tm_mon + 1) % interval) != 0) return false;
-        } else if (monthStr.toInt() != (timeinfo.tm_mon + 1)) return false;
-    }
-    // Проверка дня недели
-    if (dowStr != "*") {
-        int targetDow = (dowStr.toInt() == 7) ? 0 : dowStr.toInt();
-        if (targetDow != timeinfo.tm_wday) return false;
-    }
-
-    // 2. Проверка времени (Часы и Минуты)
-    long curTotalSec = (long)timeinfo.tm_hour * 3600 + (long)timeinfo.tm_min * 60 + timeinfo.tm_sec;
-    int startM = (minStr == "*") ? 0 : minStr.toInt();
-    int startH = (hourStr == "*") ? 0 : hourStr.toInt();
-    long startTotalSec = (long)startH * 3600 + (long)startM * 60;
-
-    if (s.useDuration) {
-        // Если используем длительность: должна совпадать минута начала
-        bool timeMatch = (hourStr == "*" || startH == timeinfo.tm_hour) &&
-                         (minStr == "*" || startM == timeinfo.tm_min);
-        return timeMatch && (timeinfo.tm_sec < s.duration);
-    } else {
-        // Если используем время конца: проверяем вхождение в диапазон
-        int eFirstSpace = s.endCron.indexOf(' ');
-        int eSecondSpace = s.endCron.indexOf(' ', eFirstSpace + 1);
-        int endM = s.endCron.substring(0, eFirstSpace).toInt();
-        int endH = s.endCron.substring(eFirstSpace + 1, eSecondSpace).toInt();
-        long endTotalSec = (long)endH * 3600 + (long)endM * 60 + 59;
-
-        if (endTotalSec < startTotalSec) { // Переход через полночь
-            return (curTotalSec >= startTotalSec || curTotalSec <= endTotalSec);
-        }
-        return (curTotalSec >= startTotalSec && curTotalSec <= endTotalSec);
-    }
+    return isTimeInSchedule(s, timeinfo);
 }
 
 void updateRelaysLogic() {
@@ -365,7 +478,7 @@ void updateRelaysLogic() {
         bool targetState = r->manualMode ? r->state : anyScheduleActive;
 
         // check the protective time interval (isLimited)
-        if (targetState && r->isLimited && r->lastOnTime > 0 && now > 946684800) {
+        if (targetState && r->isLimited && r->lastOnTime > 0 && now > NTP_VALID_EPOCH) {
             if ((now - r->lastOnTime) > relayMaxWorkTimeSec) {
                 targetState = false;
                 r->manualMode = false; // Возврат в авто
@@ -400,57 +513,8 @@ void updateRelaysLogic() {
 }
 
 // --- WEB Handlers ---
-bool isValidPart(String part, int minVal, int maxVal) {
-    part.trim();
-    if (part == "*") return true;
-
-    // Проверка формата */N
-    if (part.startsWith("*/")) {
-        int v = part.substring(2).toInt();
-        return (v > 0 && v <= maxVal);
-    }
-
-    // Проверка конкретного числа N
-    // toInt() вернет 0, если в строке буквы. Проверим, что это реально число.
-    for (char c: part) if (!isDigit(c)) return false;
-
-    int v = part.toInt();
-    return (v >= minVal && v <= maxVal);
-}
-
-bool isValidCron(String str) {
-    str.trim();
-    // Разбиваем строку по пробелам
-    int partsFound = 0;
-    String parts[5];
-
-    int lastSpace = -1;
-    for (int i = 0; i < 5; i++) {
-        int nextSpace = str.indexOf(' ', lastSpace + 1);
-        if (i < 4 && nextSpace == -1) return false; // Нужно 5 частей
-
-        if (i == 4) parts[i] = str.substring(lastSpace + 1);
-        else parts[i] = str.substring(lastSpace + 1, nextSpace);
-
-        parts[i].trim();
-        if (parts[i].length() == 0) return false;
-
-        lastSpace = nextSpace;
-        partsFound++;
-    }
-
-    if (partsFound != 5) return false;
-
-    // Валидация каждого поля согласно логике isCurrentTimeInSchedule
-    if (!isValidPart(parts[0], 0, 59)) return false; // Минуты
-    if (!isValidPart(parts[1], 0, 23)) return false; // Часы
-    if (!isValidPart(parts[2], 1, 31)) return false; // Дни
-    if (!isValidPart(parts[3], 1, 12)) return false; // Месяцы
-    if (!isValidPart(parts[4], 0, 7)) return false; // День недели (0-7)
-
-    return true;
-}
-
+// isValidPart/isValidCron now live in schedule_logic.h alongside the rest of
+// the cron logic (see comment there).
 String getSchedulesTable(int rid) {
     String html = "";
     for (int i = 0; i < relays[rid]->scheduleCount; i++) {
@@ -489,7 +553,7 @@ void handleRelayAJAX(bool targetState) {
     }
 
     int rid = server.arg("rid").toInt();
-    if (rid < 0 || rid >= 3) {
+    if (rid < 0 || rid >= RELAY_COUNT) {
         server.send(400, "application/json", "{\"status\":\"ERROR\",\"message\":\"Invalid rid\"}");
         return;
     }
@@ -811,7 +875,7 @@ void webHandleScheduleDel() {
     if (!checkAuth()) return;
     int rid = server.arg("rid").toInt();
     int id = server.arg("id").toInt();
-    if (rid >= 0 && rid < 3 && id < relays[rid]->scheduleCount) {
+    if (rid >= 0 && rid < RELAY_COUNT && id < relays[rid]->scheduleCount) {
         for (int i = id; i < relays[rid]->scheduleCount - 1; i++)
             relays[rid]->schedules[i] = relays[rid]->schedules[i + 1];
         relays[rid]->scheduleCount--;
@@ -819,6 +883,167 @@ void webHandleScheduleDel() {
     }
     server.sendHeader("Location", "/");
     server.send(303);
+}
+
+// --- Status LED ---
+void setStatusLed(bool on) {
+    digitalWrite(STATUS_LED_PIN, on ? LOW : HIGH); // active-low
+}
+
+// pulseCount == 0 -> solid on. Otherwise repeats every LED_PULSE_CYCLE_MS:
+// pulseCount short ON pulses separated by short gaps, then OFF for the rest
+// of the cycle - e.g. pulseCount=2 -> ON,OFF,ON,long-OFF. Non-blocking,
+// derives on/off purely from millis() (wraparound-safe, self-resyncing),
+// only writes the pin when the state actually needs to change.
+void updateStatusLedPulses(int pulseCount) {
+    if (pulseCount <= 0) {
+        if (!ledOn) {
+            ledOn = true;
+            setStatusLed(true);
+        }
+        return;
+    }
+
+    unsigned long elapsed = millis() % LED_PULSE_CYCLE_MS;
+    unsigned long activeSpan = (unsigned long) (2 * pulseCount - 1) * LED_PULSE_UNIT_MS;
+    bool shouldBeOn = (elapsed < activeSpan) && ((elapsed / LED_PULSE_UNIT_MS) % 2 == 0);
+
+    if (shouldBeOn != ledOn) {
+        ledOn = shouldBeOn;
+        setStatusLed(ledOn);
+    }
+}
+
+// Non-blocking symmetric blink at the given full on/off period - used only
+// for WiFi setup AP mode, which isn't a SystemState and keeps its original
+// simple slow blink rather than the pulse-count scheme above.
+void updateStatusLedBlink(unsigned long periodMs) {
+    unsigned long now = millis();
+    if (now - ledLastToggleMs >= periodMs / 2) {
+        ledLastToggleMs = now;
+        ledOn = !ledOn;
+        setStatusLed(ledOn);
+    }
+}
+
+int ledPulseCountForState(SystemState s) {
+    switch (s) {
+        case SystemState::BOOT_WIFI: return 1;
+        case SystemState::BOOT_NTP: return 2;
+        case SystemState::DEGRADED: return 3;
+        case SystemState::RUNNING: default: return 0; // solid on
+    }
+}
+
+// --- WiFi setup portal (AP config mode) ---
+// GPIO0 can't be read at the exact reset instant - the ESP8266 ROM bootloader
+// samples it right then to decide UART-flash-mode vs run-mode, so holding it
+// LOW from power-on sends the chip into the flasher instead of the sketch.
+// This checks it a few seconds INTO setup() instead: boot proceeds normally,
+// and holding the onboard FLASH button (GPIO0/D3) for >=1s within the first
+// 3s after this point is read as "enter WiFi setup mode".
+bool checkWifiSetupTrigger() {
+    pinMode(WIFI_SETUP_BUTTON_PIN, INPUT_PULLUP);
+    Serial.println("Hold FLASH button now for WiFi setup mode...");
+
+    unsigned long windowStart = millis();
+    unsigned long lastHighAt = windowStart;
+
+    while (millis() - windowStart < WIFI_SETUP_TRIGGER_WINDOW_MS) {
+        updateStatusLedPulses(ledPulseCountForState(SystemState::BOOT_WIFI)); // blinking already during the button-check window
+        if (digitalRead(WIFI_SETUP_BUTTON_PIN) == HIGH) {
+            lastHighAt = millis();
+        } else if (millis() - lastHighAt >= WIFI_SETUP_HOLD_REQUIRED_MS) {
+            return true;
+        }
+        delay(20);
+    }
+    return false;
+}
+
+ESP8266WebServer setupServer(80);
+
+void wifiSetupHandleRoot() {
+    File f = LittleFS.open("/wifi_setup.html", "r");
+    if (!f) {
+        setupServer.send(500, "text/plain", "wifi_setup.html not found - did you run uploadfs?");
+        return;
+    }
+    String html = f.readString();
+    f.close();
+
+    html.replace("%SSID%", activeWifiSsid);
+    html.replace("%IP%", activeLocalIP.toString());
+    html.replace("%GATEWAY%", activeGateway.toString());
+    html.replace("%SUBNET%", activeSubnet.toString());
+    html.replace("%DNS1%", activePrimaryDNS.toString());
+    html.replace("%DNS2%", activeSecondaryDNS.toString());
+    html.replace("%ERROR%", "");
+
+    setupServer.send(200, "text/html", html);
+}
+
+void wifiSetupHandleSave() {
+    String ssid = setupServer.arg("ssid");
+    String pass = setupServer.arg("pass");
+    String ip = setupServer.arg("ip");
+    String gw = setupServer.arg("gateway");
+    String sn = setupServer.arg("subnet");
+    String d1 = setupServer.arg("dns1");
+    String d2 = setupServer.arg("dns2");
+
+    IPAddress ipCheck, gwCheck, snCheck, d1Check, d2Check;
+    bool valid = ssid.length() > 0
+                 && ipCheck.fromString(ip) && gwCheck.fromString(gw) && snCheck.fromString(sn)
+                 && d1Check.fromString(d1) && d2Check.fromString(d2);
+
+    if (!valid) {
+        setupServer.send(400, "text/plain", "Invalid input - go back and check the SSID/IP fields");
+        return;
+    }
+
+    JsonDocument doc;
+    doc["ssid"] = ssid;
+    // Blank password field means "keep the currently saved one" rather than wiping it -
+    // avoids ever having to echo the plaintext password back into the form to preserve it.
+    doc["pass"] = pass.length() > 0 ? pass : activeWifiPass;
+    doc["ip"] = ip;
+    doc["gateway"] = gw;
+    doc["subnet"] = sn;
+    doc["dns1"] = d1;
+    doc["dns2"] = d2;
+
+    File f = LittleFS.open(WIFI_CONFIG_FILENAME, "w");
+    if (f) {
+        serializeJson(doc, f);
+        f.close();
+    }
+
+    setupServer.send(200, "text/html", "<html><body><h2>Saved. Rebooting...</h2></body></html>");
+    delay(500);
+    ESP.restart();
+}
+
+// Takes over completely: raises an open SoftAP, serves the config form, and
+// reboots once saved. Never returns to the caller. Deliberately independent
+// of connectivity_state.h's state machine and the normal `server`/`loop()` -
+// nothing else needs to run while this is active, and relays are already OFF.
+void runWifiSetupPortal() {
+    Serial.println("=== WiFi Setup Mode ===");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(WIFI_SETUP_AP_SSID);
+    Serial.println("AP SSID: " + String(WIFI_SETUP_AP_SSID));
+    Serial.println("AP IP: " + WiFi.softAPIP().toString());
+
+    setupServer.on("/", HTTP_GET, wifiSetupHandleRoot);
+    setupServer.on("/save", HTTP_POST, wifiSetupHandleSave);
+    setupServer.begin();
+
+    while (true) {
+        setupServer.handleClient();
+        updateStatusLedBlink(LED_PERIOD_SETUP_AP_MS);
+        delay(10);
+    }
 }
 
 // --- Setup и Loop ---
@@ -837,49 +1062,40 @@ void setup() {
     }
 
     loadConfig();
+    loadWifiConfig();
 
     for (int i = 0; i < 3; i++) {
         pinMode(relays[i]->pin, OUTPUT);
         digitalWrite(relays[i]->pin, HIGH);
     }
     pinMode(LEAK_SENSOR_PIN, INPUT_PULLUP);
+    pinMode(STATUS_LED_PIN, OUTPUT);
 
-    // Init BMP180
+    if (checkWifiSetupTrigger()) {
+        runWifiSetupPortal(); // never returns - ends in ESP.restart()
+    }
+
+    // Init BMP280
     Wire.begin();
     if (bmp.begin()) {
         bmpAvailable = true;
-        Serial.println("BMP180 initialized");
+        Serial.println("BMP280 initialized");
     } else {
-        Serial.println("BMP180 not found");
+        Serial.println("BMP280 not found");
     }
 
+    // WiFi/NTP acquisition happens in loop() via the state machine below,
+    // so a router/ISP that isn't up yet after a power outage can never hang
+    // setup() - relays stay OFF (already set above) until schedules can run.
     WiFi.mode(WIFI_STA);
-    WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    Serial.print("Connecting to WiFi");
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-        yield();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi Connected. IP: " + WiFi.localIP().toString());
-        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-        Serial.print("Waiting for NTP time sync");
-        int timeRetry = 0;
-        while (time(nullptr) < 946684800 && timeRetry < 20) {
-            delay(500);
-            Serial.print(".");
-            timeRetry++;
-        }
-        Serial.println("\n\nNTP client initialized");
-        logEvent("SYSTEM: Boot. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
-    } else {
-        Serial.println("\nWiFi connection failed!");
-    }
+    WiFi.config(activeLocalIP, activeGateway, activeSubnet, activePrimaryDNS, activeSecondaryDNS);
+    WiFi.begin(activeWifiSsid, activeWifiPass);
+    bootStartMillis = millis();
+    lastWifiBeginAttempt = bootStartMillis;
+    wifiBeginAttempts = 1;
+    LittleFS.remove(LOG_EARLY_FILENAME); // discard any leftover from an incomplete previous boot
+    logEarlyEvent("SYSTEM: Boot started. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
+    logEarlyEvent("SYSTEM: WiFi.begin() attempt #1");
 
     // web server configuration
     server.on("/", webHandleRoot);
@@ -895,13 +1111,103 @@ void setup() {
 
     server.begin();
     Serial.println("HTTP server started");
-    logEvent("SYSTEM: HTTP server started");
+    logEarlyEvent("SYSTEM: HTTP server started");
+}
 
-    logEvent("SYSTEM: Boot complete, FW=" + String(VERSION));
+// Drives BOOT_WIFI -> BOOT_NTP -> RUNNING <-> DEGRADED. Runs every loop()
+// tick, never blocks. Reads live inputs, hands them to the pure
+// decideConnectivityAction() (connectivity_state.h, unit tested separately),
+// then performs whatever it decided - this file only does I/O, no policy.
+void updateConnectivityState() {
+    unsigned long nowMs = millis();
+    bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+    bool timeValid = updateTime();
+    SystemState prevState = systemState;
+
+    ConnectivityDecision d = decideConnectivityAction(
+        systemState, wifiConnected, timeValid, nowMs,
+        bootStartMillis, lastWifiBeginAttempt, lastNtpAttempt, lastWifiReconnect);
+
+    systemState = d.nextState;
+
+    if (d.doReboot) {
+        const char *waitingFor = (prevState == SystemState::BOOT_WIFI) ? "WiFi" : "NTP";
+        logEarlyEvent(String("SYSTEM: Boot timeout waiting for ") + waitingFor + ", rebooting");
+        delay(100);
+        ESP.restart();
+        return;
+    }
+
+    switch (d.wifiBegin) {
+        case WifiBeginReason::RETRY:
+            lastWifiBeginAttempt = nowMs;
+            wifiBeginAttempts++;
+            logEarlyEvent("SYSTEM: WiFi.begin() attempt #" + String(wifiBeginAttempts));
+            WiFi.begin(activeWifiSsid, activeWifiPass);
+            break;
+        case WifiBeginReason::RELINK_AFTER_NTP_BOOT_DROP:
+            lastWifiBeginAttempt = nowMs;
+            wifiBeginAttempts++;
+            logEarlyEvent("SYSTEM: WiFi lost before NTP sync, retrying WiFi");
+            WiFi.begin(activeWifiSsid, activeWifiPass);
+            break;
+        default:
+            break;
+    }
+
+    if (d.enteredBootNtp) {
+        logEarlyEvent("SYSTEM: WiFi connected. IP=" + WiFi.localIP().toString());
+    }
+
+    switch (d.ntpRequest) {
+        case NtpRequestReason::INITIAL:
+            lastNtpAttempt = nowMs;
+            logEarlyEvent("SYSTEM: NTP sync requested");
+            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            break;
+        case NtpRequestReason::BOOT_RETRY:
+            lastNtpAttempt = nowMs;
+            logEarlyEvent("SYSTEM: NTP sync retry");
+            configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+            break;
+        case NtpRequestReason::PERIODIC:
+            lastNtpAttempt = nowMs;
+            requestNtpResync("periodic");
+            break;
+        case NtpRequestReason::AFTER_RECONNECT:
+            lastNtpAttempt = nowMs;
+            requestNtpResync("after reconnect");
+            break;
+        default:
+            break;
+    }
+
+    if (d.enteredRunning) {
+        flushEarlyLog();
+        logEvent("SYSTEM: NTP synced, boot complete. Reason: " + ESP.getResetReason() + " | FW=" + String(VERSION));
+    }
+    if (d.enteredDegraded) {
+        logEvent("SYSTEM: WiFi link lost, schedule continues on local clock");
+    }
+    if (d.exitedDegraded) {
+        logEvent("SYSTEM: WiFi link restored. IP=" + WiFi.localIP().toString());
+    }
+    if (d.doWifiReconnect) {
+        lastWifiReconnect = nowMs;
+        logEvent("SYSTEM: WiFi reconnect attempt");
+        WiFi.reconnect();
+    }
+
+    if (systemState == SystemState::RUNNING) {
+        checkNtpResyncResult();
+    }
 }
 
 void loop() {
     server.handleClient();
+
+    updateConnectivityState();
+    updateStatusLedPulses(ledPulseCountForState(systemState));
     updateRelaysLogic();
 
     unsigned long currentMillis = millis();
